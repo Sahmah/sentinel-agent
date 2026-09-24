@@ -25,6 +25,7 @@ snapshots/
 
 # Personal dev logs (Portuguese), kept local
 docs/diario-*.md
+docs/guia-*.md
 
 # Frontend tooling, if run from the repo root by mistake
 /node_modules/
