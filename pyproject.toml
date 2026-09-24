@@ -1,0 +1,75 @@
+[project]
+name = "sentinel-agent"
+version = "0.1.0"
+description = "Vision detection + LLM reasoning agent pipeline with calibrated confidence fusion, queryable over MCP."
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Sarah Lima", email = "saramarialima43@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9",
+    # Not the -headless build: ultralytics (the `vision` extra) depends on opencv-python, and
+    # the two wheels overwrite each other's cv2 module. The GUI build also gives the webcam
+    # mode its preview window.
+    "opencv-python>=4.10",
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "langgraph>=0.6",
+    "langchain-core>=0.3",
+    "langchain-aws>=0.2",
+    "mcp>=2.0",
+    "boto3>=1.35",
+]
+
+[project.optional-dependencies]
+# Real detector for webcam/video input. Ultralytics YOLO is AGPL-3.0 — see README.
+vision = [
+    "ultralytics>=8.4",
+    # Listed directly so [tool.uv.sources] can pin them to the CPU index — uv sources only
+    # apply to direct dependencies, not to ones pulled in transitively by ultralytics.
+    "torch>=2.4",
+    "torchvision>=0.19",
+]
+
+[project.scripts]
+sentinel = "sentinel_agent.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6.115",
+    "moto[s3,dynamodb]>=5.2",
+    "ruff>=0.7",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Skills are reference docs; don't let `ruff format` rewrite their code samples.
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+# CPU-only PyTorch wheels: the default index ships CUDA builds (~2 GB) nobody needs for a
+# webcam demo. Only torch/torchvision come from this index.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"

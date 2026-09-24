@@ -1,0 +1,26 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
+# Model weights (downloaded to ~/.cache/sentinel-agent/, but keep strays out)
+*.pt
+*.onnx
+
+# Run output
+sentinel.db
+*.mp4
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# Personal dev logs (Portuguese), kept local
+docs/diario-*.md
