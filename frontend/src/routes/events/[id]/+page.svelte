@@ -3,7 +3,7 @@
 	import { ApiError, cropUrl, reviewEvent, sceneUrl, type Verdict } from '$lib/api';
 	import ActionBadge from '$lib/components/ActionBadge.svelte';
 	import ConfidenceBar from '$lib/components/ConfidenceBar.svelte';
-	import { describeDuration, formatDateTime, percent } from '$lib/format';
+	import { ACTION_LABELS, describeDuration, formatDateTime, percent } from '$lib/format';
 
 	let { data } = $props();
 
@@ -13,6 +13,8 @@
 	let reviewError = $state('');
 
 	let scene = $derived(sceneUrl(event));
+	// Only human_review events are waiting on a person; on the others a review is optional feedback.
+	let needsYou = $derived(event.action === 'human_review' && !event.review);
 	let crop = $derived(cropUrl(event));
 
 	async function review(verdict: Verdict) {
@@ -89,16 +91,30 @@
 	</p>
 </section>
 
-<section class="panel">
-	<h2>Your review</h2>
-	<p class="muted">
-		{#if event.review}
-			You marked this as <strong>{event.review === 'real' ? 'real' : 'a false alarm'}</strong>.
-			You can change it.
-		{:else}
-			Was this real? Your answers calibrate the camera's confidence (after 5 of each).
-		{/if}
-	</p>
+<section class={['panel', { needed: needsYou }]}>
+	{#if needsYou}
+		<h2>Needs your decision</h2>
+		<p>
+			{event.llm_confidence === null
+				? "The agent's answer could not be used, so the system did not decide on its own."
+				: event.disagreement
+					? `Vision (${percent(event.p_cv)}) and the agent (${percent(event.llm_confidence)}) disagree, so the system did not decide on its own.`
+					: 'The combined confidence is too uncertain for the system to decide on its own.'}
+			Was it real?
+		</p>
+	{:else}
+		<h2>Was this right? <span class="muted">(optional)</span></h2>
+		<p class="muted">
+			{#if event.review}
+				Marked as <strong>{event.review === 'real' ? 'real' : 'a false alarm'}</strong>. You can
+				change it.
+			{:else}
+				The system decided <strong>{ACTION_LABELS[event.action].toLowerCase()}</strong> on its own.
+				Telling it whether it was right calibrates the camera's confidence (after 5 real and 5
+				false alarms).
+			{/if}
+		</p>
+	{/if}
 	<div class="actions">
 		<button
 			onclick={() => review('real')}
@@ -174,6 +190,10 @@
 		gap: 0.35rem;
 		max-width: 26rem;
 		margin-top: 0.8rem;
+	}
+	.needed {
+		border-color: var(--review);
+		border-width: 2px;
 	}
 	.actions {
 		display: flex;
