@@ -1,10 +1,15 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import '../app.css';
+	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
+	import { appHistory } from '$lib/history.svelte';
 	import favicon from '$lib/assets/favicon.svg';
 
 	let { children } = $props();
+
+	// Mirror the browser history so back links can act like the back button.
+	afterNavigate((nav) => appHistory.record(nav));
 
 	let onDay = $derived(page.url.pathname === '/events' && page.url.searchParams.has('day'));
 	let pendingView = $derived(

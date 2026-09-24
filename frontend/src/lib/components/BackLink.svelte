@@ -1,28 +1,25 @@
 <script lang="ts">
-	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { PathnameWithSearchOrHash } from '$app/types';
+	import { appHistory } from '$lib/history.svelte';
 	import { pageLabel } from '$lib/views';
 
-	/** Goes back to the page the user came from; `fallback`/`label` are only used for a
-	 * page opened directly (a pasted link, a notification, a reload). */
+	/** Behaves like the browser's back button and names the page it returns to.
+	 * `fallback`/`label` are only for a page opened with nothing to go back to
+	 * (a pasted link, a notification, a reload). */
 	let { fallback, label }: { fallback: PathnameWithSearchOrHash; label: string } = $props();
 
-	let from = $state<URL | null>(null);
+	// History entries are app paths recorded by SvelteKit's router (without the base path).
+	let back = $derived(appHistory.previous as PathnameWithSearchOrHash | null);
+	let text = $derived(back ? pageLabel(new URL(back, 'http://app')) : label);
 
-	afterNavigate(({ from: previous, to }) => {
-		// Only arrivals from another page count: switching tabs or filters on this
-		// page is also a navigation, and must not turn "back" into "previous tab".
-		if (previous && previous.route.id !== to?.route.id) from = previous.url;
-	});
-
-	// The previous URL came from SvelteKit's own router, so it is an app path; strip the
-	// base path it already carries so resolve() adds it exactly once.
-	const base = resolve('/').replace(/\/$/, '');
-	let target = $derived(
-		from ? (`${from.pathname.slice(base.length)}${from.search}` as PathnameWithSearchOrHash) : fallback
-	);
-	let text = $derived(from ? pageLabel(from) : label);
+	function onclick(event: MouseEvent) {
+		// A plain click steps back through history, exactly like the browser's button;
+		// ctrl/cmd/middle-click keeps the link's normal "open in a new tab".
+		if (!back || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+		event.preventDefault();
+		history.back();
+	}
 </script>
 
-<p><a href={resolve(target)}>← {text}</a></p>
+<p><a href={resolve(back ?? fallback)} {onclick}>← {text}</a></p>
