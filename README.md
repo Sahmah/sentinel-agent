@@ -146,7 +146,24 @@ probably artifacts improved calibration. The rise in human reviews is the design
 the model is unsure about flickers, it disagrees with a detector that is sure, and
 disagreement goes to a person. gemma3:4b took about 8 s per event on an 8 GB AMD RX 580
 (Vulkan). Note what this does and does not show: from metadata alone, an LLM can at best
-match the rules. Its real advantage should come from seeing the snapshot (roadmap).
+match the rules. Its real advantage should come from seeing the snapshot.
+
+### Letting the agent see the snapshot
+
+```bash
+export SENTINEL_LLM_VISION=1   # the reasoning prompt now carries the event's crop
+```
+
+With vision on, each event's crop is attached to the prompt as a standard image block (Ollama
+and Bedrock both accept it), and the prompt asks the model to say what the image shows and to
+lower its confidence if it is not the labelled object. On a test clip, gemma3:4b described the
+crops correctly ("a person standing near a bus") but still judged a 20-detection, 3.8 s track
+as "brief" and gave a person inside the zone low severity. The plumbing works; a 4B model's
+judgement is the limit, and a larger model is the next thing to try. Two caveats:
+`eval-llm` ignores vision (the synthetic targets are drawn circles, which a model that can see
+would rightly doubt), so grading vision needs real footage with human reviews, which the
+dashboard collects; and seeing the same pixels as the detector makes the two signals somewhat
+less independent (the model still never sees the detector's score).
 
 ## How it works
 
@@ -186,7 +203,7 @@ These are part of the point of the project, not fine print.
 ## Development
 
 ```bash
-uv run pytest                                  # 102 tests, no network, no AWS
+uv run pytest                                  # 113 tests, no network, no AWS
 uv run ruff check . && uv run ruff format --check .
 ```
 
@@ -204,8 +221,11 @@ the real model runs only when the `vision` extra and the weights are installed.
 - [x] MCP server (`sentinel serve-mcp`) to query past events and alerts from Claude
 - [x] Local LLM backend (Ollama) and `sentinel eval-llm`
 - [x] Event snapshots (crop + scene)
-- [ ] Vision LLM: send the snapshot to the reasoning model
-- [ ] HTTP API, live dashboard (Svelte) and notifications
+- [x] Vision LLM: send the snapshot to the reasoning model (`SENTINEL_LLM_VISION=1`)
+- [x] HTTP API, live dashboard (Svelte), desktop notifications, human review
+- [x] Webcam confidence calibrated on human reviews
+- [ ] Grade vision on reviewed real footage
+- [ ] Phone notifications (Telegram or self-hosted ntfy)
 - [ ] Terraform for the AWS path (least-privilege IAM, Bedrock, DynamoDB, S3)
 - [ ] GitHub Actions CI
 

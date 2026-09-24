@@ -88,13 +88,20 @@ def evaluate_calibration(
     )
 
 
-def decide(graph, event: Event, calibrator: PlattCalibrator | None = None) -> Decision:
+def decide(
+    graph,
+    event: Event,
+    calibrator: PlattCalibrator | None = None,
+    snapshot_path: str | None = None,
+) -> Decision:
     if calibrator is not None:
         p_cv = float(calibrator.predict(np.array([event.mean_raw_confidence]))[0])
     else:
         p_cv = event.mean_raw_confidence
     event = event.model_copy(update={"calibrated_confidence": p_cv if calibrator else None})
-    state = graph.invoke({"event": event.model_dump(), "p_cv": p_cv})
+    state = graph.invoke(
+        {"event": event.model_dump(), "p_cv": p_cv, "snapshot_path": snapshot_path}
+    )
     return Decision(event=event, p_cv=p_cv, calibrated=calibrator is not None, state=state)
 
 

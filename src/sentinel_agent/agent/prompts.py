@@ -13,8 +13,13 @@ Deliberate choices, the first two from the confidence-calibration skill (§2, §
   behave). Without it, small local models read "many detections" as a sign of
   an artifact: gemma3:4b scored AUROC 0.24 on `sentinel eval-llm`, worse than
   chance. It explains the evidence; it does not hand over a score table.
+- With `vision=True` the model also sees the event's crop. That weakens the
+  independence assumption a little (the detector and the model now look at the
+  same pixels, though the model still never sees the detector's score), and
+  it is the one input from which an LLM can do better than the rules.
 """
 
+import base64
 import json
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -70,11 +75,31 @@ def event_payload(event: Event) -> dict:
     }
 
 
-def build_messages(event: Event, *, feedback: str | None = None) -> list[BaseMessage]:
+IMAGE_NOTE = """
+
+Attached is a crop of the camera frame at the event's most confident detection. Use it as a \
+second, independent line of evidence: say what it actually shows, and lower your confidence \
+if it does not show a {label} (a shadow, a reflection, a coat on a chair). The image cannot \
+show how long the track lasted: keep weighing the track as described above."""
+
+
+def build_messages(
+    event: Event, *, feedback: str | None = None, image: bytes | None = None
+) -> list[BaseMessage]:
+    """`image`: the event's JPEG crop, for vision-capable models (sent as a
+    standard LangChain image block, which Ollama and Bedrock both accept)."""
     body = f"{EVENT_OPEN}\n{json.dumps(event_payload(event), indent=2)}\n{EVENT_CLOSE}"
+    if image is not None:
+        body += IMAGE_NOTE.format(label=event.label)
     if feedback:
         body += (
             "\n\nYour previous answer could not be parsed: "
             f"{feedback}\nReply again with only the JSON object."
         )
-    return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=body)]
+    if image is None:
+        return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=body)]
+    content = [
+        {"type": "text", "text": body},
+        {"type": "image", "base64": base64.b64encode(image).decode(), "mime_type": "image/jpeg"},
+    ]
+    return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=content)]

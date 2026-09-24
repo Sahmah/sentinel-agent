@@ -210,3 +210,42 @@ def test_heuristic_confidence_tracks_persistence():
     assert conf(1) < conf(3) < conf(6) < conf(30)
     outside = {**_PAYLOAD, "label": "object", "entered_restricted_zone": False}
     assert heuristic_reasoning(outside).severity == "low"
+
+
+class _RecordingModel(DemoChatModel):
+    """Answers like the demo model and remembers the messages it was sent."""
+
+    seen: list = []
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.seen.append(messages)
+        return super()._generate(messages, stop, run_manager, **kwargs)
+
+
+def _image_blocks(messages):
+    content = messages[-1].content
+    return [b for b in content if isinstance(b, dict) and b.get("type") == "image"]
+
+
+@pytest.mark.parametrize("vision", [True, False])
+def test_reason_node_attaches_the_snapshot_only_with_vision(tmp_path, make_event, vision):
+    crop = tmp_path / "crop.jpg"
+    crop.write_bytes(b"\xff\xd8jpeg-bytes")
+    model = _RecordingModel(seen=[])
+    node = make_reason_node(model, vision=vision)
+    update = node({"event": make_event().model_dump(), "snapshot_path": str(crop)})
+    assert update["reasoning_failed"] is False  # the demo model still finds the <event> block
+    (messages,) = model.seen
+    if vision:
+        (block,) = _image_blocks(messages)
+        assert block["mime_type"] == "image/jpeg" and block["base64"]
+        assert "Attached is a crop" in messages[-1].text
+    else:
+        assert isinstance(messages[-1].content, str)
+
+
+def test_missing_snapshot_falls_back_to_text(tmp_path, make_event):
+    model = _RecordingModel(seen=[])
+    node = make_reason_node(model, vision=True)
+    node({"event": make_event().model_dump(), "snapshot_path": str(tmp_path / "gone.jpg")})
+    assert isinstance(model.seen[0][-1].content, str)

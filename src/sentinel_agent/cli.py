@@ -21,7 +21,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from sentinel_agent.agent.graph import DecisionPolicy, build_graph
-from sentinel_agent.agent.llm import build_llm
+from sentinel_agent.agent.llm import build_llm, vision_enabled
 from sentinel_agent.events.aggregator import cluster_into_events
 from sentinel_agent.events.models import Event
 from sentinel_agent.pipeline import (
@@ -65,16 +65,28 @@ def cmd_demo(args: argparse.Namespace) -> int:
     print(f"Running the pipeline on synthetic seed {args.seed}...\n")
     frames, detections = synthetic_scene(args.seed)
     events = cluster_into_events(detections)
-    graph = build_graph(build_llm())
-    decisions = [decide(graph, e, calibrator) for e in events]
+    vision = vision_enabled()
+    graph = build_graph(build_llm(), vision=vision)
+    # Snapshots are cut before deciding: with vision on, the agent looks at them.
+    snapshots: dict[str, str | None] = {}
+    if vision or not args.no_store:
+        for e in events:
+            frame = frames.get(e.best_frame_index)
+            snapshots[e.id] = save_snapshots(frame, e) if frame is not None else None
+    decisions = [
+        decide(graph, e, calibrator, snapshot_path=_snapshot_path(snapshots.get(e.id)))
+        for e in events
+    ]
     if not args.no_store:
         storage, run_id, started = build_storage(), uuid.uuid4().hex[:12], datetime.now(UTC)
         for d in decisions:
-            frame = frames.get(d.event.best_frame_index)
-            snapshot = save_snapshots(frame, d.event) if frame is not None else None
             storage.save(
                 to_record(
-                    d, run_id=run_id, source="demo", run_started_at=started, snapshot=snapshot
+                    d,
+                    run_id=run_id,
+                    source="demo",
+                    run_started_at=started,
+                    snapshot=snapshots.get(d.event.id),
                 )
             )
 
@@ -108,6 +120,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _snapshot_path(name: str | None) -> str | None:
+    return str(snapshot_dir() / name) if name else None
+
+
 def _parse_zone(text: str) -> tuple[float, float, float, float]:
     parts = tuple(float(v) for v in text.split(","))
     if len(parts) != 4 or not all(0 <= v <= 1 for v in parts):
@@ -125,6 +141,7 @@ class EventWorker:
         graph,
         *,
         calibrator=None,
+        snapshot_for: Callable[[str], str | None] | None = None,
         save: Callable[[Decision], None] | None = None,
         out=None,
     ):
@@ -132,6 +149,7 @@ class EventWorker:
         self.saved = 0
         self._graph = graph
         self._calibrator = calibrator
+        self._snapshot_for = snapshot_for or (lambda event_id: None)
         self._save = save
         self._out = out
         self._queue: queue.Queue[Event | None] = queue.Queue()
@@ -151,7 +169,7 @@ class EventWorker:
         out = self._out or sys.stdout
         while (event := self._queue.get()) is not None:
             try:
-                d = decide(self._graph, event, self._calibrator)
+                d = decide(self._graph, event, self._calibrator, self._snapshot_for(event.id))
             except Exception as exc:  # keep the stream alive if one LLM call fails
                 print(f"agent failed on {event.label} at {event.start_ts:.1f}s: {exc}", file=out)
                 continue
@@ -247,12 +265,18 @@ def cmd_webcam(args: argparse.Namespace) -> int:
                 )
             )
 
-    worker = EventWorker(build_graph(build_llm(), policy=policy), calibrator=calibrator, save=save)
+    vision = vision_enabled()
+    worker = EventWorker(
+        build_graph(build_llm(), policy=policy, vision=vision),
+        calibrator=calibrator,
+        snapshot_for=lambda event_id: _snapshot_path(snapshots.get(event_id)),
+        save=save,
+    )
 
     def close_events(events: list[Event]) -> None:
         # Snapshots are cut here, in the capture thread that owns the frame buffer,
         # before the event is queued for the (slower) agent thread.
-        if not args.no_store:
+        if vision or not args.no_store:
             for event in events:
                 frame = frame_buffer.get(event.best_frame_index)
                 if frame is not None:
@@ -294,7 +318,7 @@ def cmd_webcam(args: argparse.Namespace) -> int:
                     frame, camera_id=args.camera_id, frame_index=frame_index, timestamp=now
                 )
                 aggregator.add(detections)
-                if not args.no_store:
+                if vision or not args.no_store:
                     frame_buffer.add(frame_index, now, frame)
                 close_events(aggregator.pop_closed(now))
 
@@ -340,6 +364,12 @@ def cmd_eval_llm(args: argparse.Namespace) -> int:
     # Calibration scenes are kept apart from the evaluated ones (seeds 1000+).
     calibration_seeds = list(range(1000, 1000 + args.calibration_scenes))
     calibrator = fit_calibrator([d for s in calibration_seeds for d in synthetic_detections(s)])
+    if vision_enabled():
+        print(
+            "Note: SENTINEL_LLM_VISION is ignored here. The synthetic targets are drawn shapes,\n"
+            "so an image-reading model would rightly doubt them; vision needs real, reviewed\n"
+            "video to be graded.\n"
+        )
     graph = build_graph(build_llm())
     print(f"Evaluating on synthetic seeds {args.seeds} (backend: {_backend_name()})\n")
     print(f"{'seed':>4} {'label':<7} {'dets':>4} {'zone':<4} {'truth':<5} {'p_llm':>5}  action")

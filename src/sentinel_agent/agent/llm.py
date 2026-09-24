@@ -11,6 +11,9 @@ Backend is picked by `SENTINEL_LLM_BACKEND`:
   from `SENTINEL_OLLAMA_MODEL`, server from `SENTINEL_OLLAMA_URL`. Free and
   offline; small models reason noticeably worse, see `sentinel eval-llm`.
 
+`SENTINEL_LLM_VISION=1` (see `vision_enabled`) sends each event's snapshot
+along with the prompt; the model must accept images.
+
 Structured output is parsed by hand from plain JSON text rather than through
 `with_structured_output()`: that path sends a forced `tool_choice`, which newer
 Claude models on Bedrock reject with a 400 (langchain-aws issue #1310; see the
@@ -68,6 +71,10 @@ class DemoChatModel(BaseChatModel):
         payload = json.loads(text[start + len(EVENT_OPEN) : end])
         reply = heuristic_reasoning(payload).model_dump_json()
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=reply))])
+
+
+def vision_enabled() -> bool:
+    return os.environ.get("SENTINEL_LLM_VISION", "").lower() in ("1", "true", "yes")
 
 
 def build_llm(backend: str | None = None) -> BaseChatModel:

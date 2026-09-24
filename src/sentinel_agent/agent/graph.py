@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
@@ -90,12 +91,15 @@ def make_reason_node(
     *,
     max_parse_attempts: int = 2,
     sleep: Callable[[float], None] = time.sleep,
+    vision: bool = False,
 ) -> Callable[[EventState], dict]:
     def reason(state: EventState) -> dict:
         event = Event.model_validate(state["event"])
+        image = _read_snapshot(state.get("snapshot_path")) if vision else None
         feedback: str | None = None
         for _ in range(max_parse_attempts):
-            reply = invoke_with_backoff(llm, build_messages(event, feedback=feedback), sleep=sleep)
+            messages = build_messages(event, feedback=feedback, image=image)
+            reply = invoke_with_backoff(llm, messages, sleep=sleep)
             try:
                 out = parse_reasoning(reply.text)
             except ReasoningParseError as exc:
@@ -115,6 +119,16 @@ def make_reason_node(
         }
 
     return reason
+
+
+def _read_snapshot(path: str | None) -> bytes | None:
+    # A missing crop (no frame kept, disk full) degrades to a text-only prompt.
+    if not path:
+        return None
+    try:
+        return Path(path).read_bytes()
+    except OSError:
+        return None
 
 
 def make_decide_node(policy: DecisionPolicy) -> Callable[[EventState], dict]:
@@ -155,7 +169,10 @@ def build_graph(
     checkpointer: Checkpointer = None,
     policy: DecisionPolicy | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    vision: bool = False,
 ):
+    """`vision=True` attaches each event's snapshot to the reasoning prompt; the
+    model must accept images (e.g. gemma3 on Ollama, Claude on Bedrock)."""
     policy = policy or DecisionPolicy()
     builder = StateGraph(EventState)
     builder.add_node(
@@ -164,7 +181,7 @@ def build_graph(
             triage, min_person_detections_outside_zone=policy.min_person_detections_outside_zone
         ),
     )
-    builder.add_node("reason", make_reason_node(llm, sleep=sleep))
+    builder.add_node("reason", make_reason_node(llm, sleep=sleep, vision=vision))
     builder.add_node("decide", make_decide_node(policy))
     builder.add_edge(START, "triage")
     builder.add_conditional_edges("triage", route_after_triage, {"reason": "reason", END: END})
