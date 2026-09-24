@@ -116,6 +116,11 @@ cd frontend && npm install && npm run build && cd ..
 uv run sentinel serve             # http://127.0.0.1:8000
 ```
 
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="Dashboard: summary tiles, filters, and live events with crops and vision/agent confidence bars" width="49%">
+  <img src="docs/images/event-detail.png" alt="Event page: scene, crop, the agent's reasoning, three confidences and the review buttons" width="49%">
+</p>
+
 A Svelte 5 dashboard over the same event store: summary, filters and a review queue, a live
 feed (new events arrive over Server-Sent Events while `sentinel webcam` runs), and for each
 event the scene, the crop, the agent's reasoning and the three confidences (vision, agent,
