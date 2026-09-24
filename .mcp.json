@@ -3,6 +3,10 @@
     "sentinel": {
       "command": "uv",
       "args": ["run", "sentinel", "serve-mcp"]
+    },
+    "svelte": {
+      "command": "npx",
+      "args": ["-y", "@sveltejs/mcp"]
     }
   }
 }
