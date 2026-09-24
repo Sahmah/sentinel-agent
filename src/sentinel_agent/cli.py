@@ -234,8 +234,8 @@ def cmd_webcam(args: argparse.Namespace) -> int:
         print(f"Could not open video source {args.source!r}.", file=sys.stderr)
         if is_camera:
             print(
-                "On WSL the webcam is usually not visible to Linux; run this command from "
-                "Windows instead (see docs/webcam.md).",
+                "On WSL, attach the camera first with usbipd-win, or run this command from "
+                "Windows (both in docs/webcam.md).",
                 file=sys.stderr,
             )
         return 1

@@ -54,11 +54,34 @@ freeze the camera or the preview window; events are still decided one at a time,
 they closed. The window shows every camera frame and redraws the last boxes between analysed
 frames.
 
+## Using the webcam from WSL (usbipd-win)
+
+WSL2 doesn't see USB webcams by default: there is no `/dev/video*`. `usbipd-win` forwards a
+USB device from Windows into WSL. Recent WSL kernels (checked on 6.18) ship the UVC webcam
+driver as a module, so this works:
+
+```powershell
+# Windows, once: install, then share the camera (admin; find its VID:PID with `usbipd list`)
+winget install --id dorssel.usbipd-win -e
+usbipd bind --hardware-id 046d:0825
+```
+
+```bash
+# WSL, each time (after a reboot or `wsl --shutdown`, the attach is gone)
+"/mnt/c/Program Files/usbipd-win/usbipd.exe" attach --wsl --hardware-id 046d:0825
+sudo modprobe uvcvideo
+sudo chgrp video /dev/video* && sudo chmod 660 /dev/video*   # WSL has no udev to do this
+uv run sentinel webcam
+```
+
+On a Logitech C270 this gave 15 fps at 640x480 inside WSL, and the preview window opens
+through WSLg. While the camera is attached to WSL, Windows apps cannot use it; give it back
+with `usbipd detach --hardware-id 046d:0825`. Right after a detach, Windows needs a few
+seconds before the camera can be attached again.
+
 ## Running from Windows when the repo lives in WSL
 
-WSL2 doesn't see USB webcams by default: there is no `/dev/video*`. Forwarding the camera with
-`usbipd-win` is possible but fiddly, and the stock WSL kernel often lacks the UVC driver.
-It is simpler to run the command with Windows Python on the same checkout:
+The alternative is to run the command with Windows Python on the same checkout:
 
 ```powershell
 # once: install uv for Windows
