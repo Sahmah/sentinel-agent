@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 
 from sentinel_agent.agent.graph import DecisionPolicy, build_graph
 from sentinel_agent.agent.llm import build_llm, vision_enabled
+from sentinel_agent.capture import LatestFrameReader
 from sentinel_agent.events.aggregator import cluster_into_events
 from sentinel_agent.events.models import Event
 from sentinel_agent.pipeline import (
@@ -207,7 +208,14 @@ def _draw_preview(cv2, frame, zone, detections, status: str) -> None:
 
 
 def cmd_webcam(args: argparse.Namespace) -> int:
+    import os
+
     import cv2
+
+    # opencv-python points Qt at its own font folder (empty in the wheel) when imported,
+    # and the preview window then warns on every frame; use the system fonts instead.
+    if sys.platform == "linux" and os.path.isdir("/usr/share/fonts/truetype"):
+        os.environ["QT_QPA_FONTDIR"] = "/usr/share/fonts/truetype"
     import numpy as np
 
     from sentinel_agent.detection.yolo import (
@@ -229,6 +237,11 @@ def cmd_webcam(args: argparse.Namespace) -> int:
         capture = cv2.VideoCapture(int(args.source), cv2.CAP_DSHOW)
     else:
         capture = cv2.VideoCapture(int(args.source) if is_camera else args.source)
+        if is_camera:
+            # Ask for MJPG: uncompressed YUYV frames are large enough that USB links with
+            # less bandwidth (a camera forwarded into WSL with usbipd) deliver them
+            # truncated, which OpenCV decodes as a solid green image.
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cv2.utils.logging.setLogLevel(log_level)
     if not capture.isOpened():
         print(f"Could not open video source {args.source!r}.", file=sys.stderr)
@@ -296,23 +309,33 @@ def cmd_webcam(args: argparse.Namespace) -> int:
 
     started = time.monotonic()
     run_started_at = datetime.now(UTC)
-    last_processed = float("-inf")
-    frame_index = -1
+    # Camera frames are analysed on a fixed schedule (0, 1/fps, 2/fps, ...). Scheduling
+    # "1/fps after the last analysis" instead lets every frame boundary and detector run
+    # overshoot, and 5 fps became 3.6 in practice.
+    period = 1 / args.fps
+    next_due = 0.0
+    frame_index = -1 if not is_camera else 0
+    # A live camera is drained by its own thread (see capture.py); files are read in order.
+    reader = LatestFrameReader(capture) if is_camera else None
     analysed = 0
     detections = []
 
     try:
         while True:
-            ok, frame = capture.read()
+            if reader is not None:
+                ok, frame, frame_index = reader.read(frame_index)
+            else:
+                ok, frame = capture.read()
+                frame_index += 1
             if not ok:
                 break
-            frame_index += 1
             now = time.monotonic() - started if is_camera else frame_index / source_fps
             if args.max_seconds and now >= args.max_seconds:
                 break
-            due = now - last_processed >= 1 / args.fps if is_camera else frame_index % step == 0
+            due = now >= next_due if is_camera else frame_index % step == 0
             if due:
-                last_processed = now
+                # Catch up after a slow frame, but never queue a burst of analyses.
+                next_due = max(next_due + period, now)
                 analysed += 1
                 detections = detector.detect(
                     frame, camera_id=args.camera_id, frame_index=frame_index, timestamp=now
@@ -332,6 +355,8 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        if reader is not None:
+            reader.close()
         capture.release()
         if not args.no_window:
             cv2.destroyAllWindows()
