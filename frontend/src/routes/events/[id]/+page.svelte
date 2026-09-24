@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { ApiError, cropUrl, reviewEvent, sceneUrl, type Verdict } from '$lib/api';
 	import ActionBadge from '$lib/components/ActionBadge.svelte';
+	import BackLink from '$lib/components/BackLink.svelte';
 	import ConfidenceBar from '$lib/components/ConfidenceBar.svelte';
 	import { dayLabel, localDay } from '$lib/days';
 	import { ACTION_LABELS, describeDuration, formatDateTime, percent } from '$lib/format';
@@ -34,7 +35,7 @@
 
 <svelte:head><title>{event.label} · Sentinel</title></svelte:head>
 
-<p><a href={resolve(`/events?day=${day}`)}>← {dayLabel(day)}</a></p>
+<BackLink fallback={`/events?day=${day}`} label={dayLabel(day)} />
 
 <header class="head">
 	<ActionBadge action={event.action} />

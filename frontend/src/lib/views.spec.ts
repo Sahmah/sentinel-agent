@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EventRecord } from './api';
 import { dayLabel, dayRange, localDay, parseDay } from './days';
-import { belongsTo, filterParams, parseView, toQuery } from './views';
+import { belongsTo, filterParams, pageLabel, parseView, toQuery } from './views';
 
 const record = (overrides: Partial<EventRecord> = {}) =>
 	({
@@ -62,5 +62,17 @@ describe('views', () => {
 			'day=2026-09-24&view=pending'
 		);
 		expect(parseView('bogus')).toBe('all');
+	});
+});
+
+describe('pageLabel', () => {
+	const label = (path: string) => pageLabel(new URL(path, 'http://x'));
+
+	it('names the page a back link returns to', () => {
+		expect(label('/')).toBe('Days');
+		expect(label('/events?view=pending')).toBe('Needs your decision');
+		expect(label('/events')).toBe('All events');
+		expect(label('/events?view=false_alarm')).toBe('All events · False alarms');
+		expect(label('/events?day=2026-09-20&view=real')).toMatch(/ · Real$/);
 	});
 });

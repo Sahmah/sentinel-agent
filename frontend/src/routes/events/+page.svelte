@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { ACTIONS, ApiError, getSummary, listEvents, type EventRecord } from '$lib/api';
+	import BackLink from '$lib/components/BackLink.svelte';
 	import EventCard from '$lib/components/EventCard.svelte';
 	import LiveStatus from '$lib/components/LiveStatus.svelte';
 	import SummaryTiles from '$lib/components/SummaryTiles.svelte';
@@ -73,7 +74,7 @@
 
 <LiveStatus status={feed.status} />
 
-<p><a href={resolve('/')}>← Days</a></p>
+<BackLink fallback="/" label="Days" />
 <h1>
 	{title}
 	{#if filter.day}<time class="muted" datetime={filter.day}>{filter.day}</time>{/if}

@@ -1,5 +1,5 @@
 import { ACTIONS, type Action, type EventQuery, type EventRecord } from './api';
-import { dayRange, localDay } from './days';
+import { dayLabel, dayRange, localDay, parseDay } from './days';
 
 /** The tabs of the events page. They split by what a *person* said; the system's
  * decision (alert, review, ...) is a second, independent filter on top. */
@@ -63,4 +63,15 @@ export function filterParams(filter: EventsFilter): string {
 	if (filter.view !== 'all') params.set('view', filter.view);
 	if (filter.action && filter.view !== 'pending') params.set('action', filter.action);
 	return params.toString();
+}
+
+/** What a "back" link to an in-app URL should say, e.g. "Needs your decision" or "Today". */
+export function pageLabel(url: URL): string {
+	if (url.pathname === '/') return 'Days';
+	if (url.pathname.startsWith('/events/')) return 'Event';
+	const view = parseView(url.searchParams.get('view'));
+	const day = parseDay(url.searchParams.get('day'));
+	if (view === 'pending') return day ? `${dayLabel(day)} · Needs you` : 'Needs your decision';
+	const where = day ? dayLabel(day) : 'All events';
+	return view === 'all' ? where : `${where} · ${VIEW_LABELS[view]}`;
 }
