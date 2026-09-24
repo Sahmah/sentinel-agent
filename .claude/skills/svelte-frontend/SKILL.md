@@ -1,6 +1,6 @@
 ---
 name: svelte-frontend
-description: Do/don't rules for the Sentinel Agent dashboard (frontend/, Svelte 5 + SvelteKit SPA). Load before writing or reviewing any .svelte, .svelte.ts or SvelteKit config file in this repo. Covers runes, the live SSE feed, talking to the Python API, snapshots, notifications, accessibility, and validating code with the official Svelte MCP/CLI.
+description: Do/don't rules for the Sentinel Agent dashboard (frontend/, Svelte 5 + SvelteKit SPA). Load before writing or reviewing any .svelte, .svelte.ts or SvelteKit config file in this repo. Covers runes, when $effect is (rarely) the right tool, the live SSE feed, talking to the Python API, snapshots, notifications, accessibility, and validating code with the official Svelte MCP/CLI.
 ---
 
 # Svelte frontend — do / don't (Sentinel Agent dashboard)
@@ -8,7 +8,8 @@ description: Do/don't rules for the Sentinel Agent dashboard (frontend/, Svelte 
 Grounded in the official Svelte AI tooling (checked 2026-09-24):
 [svelte-core-bestpractices skill](https://github.com/sveltejs/ai-tools/tree/main/tools/skills/svelte-core-bestpractices),
 [Svelte MCP docs](https://svelte.dev/docs/ai/overview), the
-[SPA](https://svelte.dev/docs/kit/single-page-apps) and
+[SPA](https://svelte.dev/docs/kit/single-page-apps),
+[`$effect`](https://svelte.dev/docs/svelte/$effect) and
 [`svelte/reactivity`](https://svelte.dev/docs/svelte/svelte-reactivity) pages. Where this file
 and the docs disagree, the docs win: fetch them (below) and fix this file.
 
@@ -53,19 +54,8 @@ and the docs disagree, the docs win: fetch them (below) and fix this file.
   are replaced, never mutated in place (event pages, the summary): no proxy overhead.
 - **Do** compute with `$derived` (or `$derived.by` for multi-line logic):
   `let alerts = $derived(events.filter((e) => e.action === 'alert'))`.
-- **Don't** compute state inside `$effect` (`$effect(() => { alerts = ... })`). That is the most
-  common Svelte 5 mistake and the autofixer flags it.
-- **Do** use `$effect` only to connect to something outside Svelte, and return its cleanup.
-  The live feed is the canonical case:
-  ```ts
-  $effect(() => {
-    const source = new EventSource('/api/stream');
-    source.addEventListener('event', (e) => live.add(JSON.parse(e.data)));
-    return () => source.close();
-  });
-  ```
-- **Don't** open an `EventSource` or `setInterval` without closing it in the cleanup. Every
-  navigation would leak a connection to the server.
+- **Don't** reach for `$effect` to keep values in sync. See §3: it is the rune with the
+  narrowest legitimate use in this codebase.
 - **Do** treat props as changing: derive from them with `$derived`, don't copy them into
   local variables.
 - **Do** share state through a class with `$state` fields in a `.svelte.ts` module
@@ -73,7 +63,45 @@ and the docs disagree, the docs win: fetch them (below) and fix this file.
 - **Don't** use legacy syntax: no `export let`, `$:`, `on:click`, `<slot>`, `createEventDispatcher`
   or stores for new code. Use `$props`, `$derived`, `onclick`, snippets and callback props.
 
-## 3. Templates
+## 3. `$effect`: only for talking to something outside Svelte
+
+The official docs call effects "an escape hatch" and say, first thing, that you should
+generally *not* update state inside them. In this dashboard there is exactly one legitimate
+effect: the connection to `/api/stream`. Before writing another, find its row below.
+
+| You want to... | Use instead of `$effect` |
+| --- | --- |
+| compute a value from state or props | `$derived` / `$derived.by` (deriveds are writable if you must override one) |
+| react to a click, input or submit | the event handler itself (`onclick`, `oninput`), or a function binding `bind:value={() => v, (next) => ...}` |
+| keep two values linked (spent / left) | one `$state` plus a `$derived`, updated from the handler |
+| load data when the page or its URL changes | a `load` function in `+page.ts`; it re-runs on navigation |
+| run code when a DOM element appears (tooltip, chart, focus) | `{@attach ...}` on the element |
+| listen on `window` / `document` | `<svelte:window onkeydown={...}>` / `<svelte:document>` |
+| read an external event source as reactive state | `createSubscriber` from `svelte/reactivity` |
+| log a value while debugging | `$inspect(value)` / `$inspect.trace()` |
+
+When an effect *is* right (open a connection, start a timer, drive a canvas or a third-party
+library), follow all of these:
+
+- **Do** return the cleanup. It runs before every re-run and when the component is destroyed:
+  `$effect(() => { const s = new EventSource(url); return () => s.close(); })`.
+- **Do** know what it depends on. An effect re-runs when any `$state`, `$derived` or prop it reads
+  **synchronously** changes, *including reads inside functions it calls*. Reads after an `await`
+  or inside a callback are not tracked. The live feed relies on this: `feed.connect(onLive)`
+  reads nothing reactive synchronously, and `onLive` only reads `events` later, inside the
+  EventSource callback. If `connect` read `events` up front, every new event would close and
+  reopen the stream.
+- **Don't** write to state the effect also reads: that is an infinite update loop. If you truly
+  must, wrap the read in `untrack(() => ...)`, and treat needing it as a design smell.
+- **Don't** fetch data in an effect to fill `$state`. You get races between responses, no
+  loading or error state, and a double request on re-runs. Use `load`, or `{#await}` for a
+  one-off.
+- **Don't** guard effects with `if (browser)`: effects never run during server rendering.
+- **Do** read the autofixer's "calling a function inside an $effect" suggestion as a
+  question to answer, not noise: check whether that function assigns state or reads state
+  synchronously. For `feed.connect` the answer is no to both, so it stays.
+
+## 4. Templates
 
 - **Do** key every `{#each}` by the event id: `{#each events as event (event.id)}`. The live
   feed prepends items; without a key, every row re-renders and images reload.
@@ -82,7 +110,7 @@ and the docs disagree, the docs win: fetch them (below) and fix this file.
 - **Do** set dynamic CSS values with `style:` or custom properties (`style:--p={p_llm}`),
   and use clsx-style `class={['badge', action]}` instead of `class:` directives.
 
-## 4. Data, errors and loading
+## 5. Data, errors and loading
 
 - **Do** load a page's data in `+page.ts` `load` functions (they run in the browser in SPA mode)
   and use the `fetch` passed to `load`.
@@ -95,7 +123,7 @@ and the docs disagree, the docs win: fetch them (below) and fix this file.
 - **Do** after a review (`POST /api/events/{id}/review`), replace the item with the record
   the API returns. Don't assume the write succeeded.
 
-## 5. Snapshots (the YOLO crops)
+## 6. Snapshots (the YOLO crops)
 
 - **Do** load them from `/api/snapshots/<id>.jpg` (crop) and `/api/snapshots/<id>_scene.jpg`
   (full frame). `snapshot` is null when an event has no crop: render a placeholder, not a
@@ -106,7 +134,7 @@ and the docs disagree, the docs win: fetch them (below) and fix this file.
 - **Don't** put snapshots in the page URL or in notifications that leave the machine: they
   are images of someone's home.
 
-## 6. Notifications
+## 7. Notifications
 
 - **Do** ask for `Notification.requestPermission()` only from a click ("Enable alerts"),
   never on page load. Browsers block or penalise unprompted requests.
@@ -115,7 +143,7 @@ and the docs disagree, the docs win: fetch them (below) and fix this file.
 - **Don't** assume permission: check `Notification.permission` and degrade to an in-page
   banner.
 
-## 7. Accessibility and UX
+## 8. Accessibility and UX
 
 - **Do** use real `<button>` elements for actions (review, load more), with visible text.
 - **Do** never convey the decision by colour alone: the action badge carries text
@@ -124,14 +152,14 @@ and the docs disagree, the docs win: fetch them (below) and fix this file.
 - **Do** support dark mode through CSS custom properties and `prefers-color-scheme`.
 - **Do** format times in the viewer's locale with `Intl.DateTimeFormat`; the API sends UTC.
 
-## 8. Security
+## 9. Security
 
 - **Don't** render model output as HTML. `reasoning` and `confidence_basis` come from an LLM:
   always `{text}`, never `{@html text}`.
 - **Don't** expose `sentinel serve` beyond localhost (it has no auth) and don't build auth
   into the UI instead: auth belongs in front of the API.
 
-## 9. Testing
+## 10. Testing
 
 - **Do** unit-test logic in `.ts`/`.svelte.ts` modules (formatting, the live feed's
   de-duplication) with Vitest; keep components thin so there is little to test in them.
