@@ -146,6 +146,13 @@ export SENTINEL_LLM_BACKEND=ollama          # SENTINEL_OLLAMA_MODEL=gemma3:4b by
 uv run sentinel eval-llm --seeds 1-5        # grade it on synthetic ground truth
 ```
 
+Running Ollama on Windows (for the GPU) and Sentinel in WSL? On Windows 11, WSL's mirrored
+networking makes `localhost` work. On Windows 10, have Ollama listen with
+`OLLAMA_HOST=0.0.0.0:11434`, allow port 11434 only from the WSL network (172.16.0.0/12) in the
+firewall, and point Sentinel at the Windows host:
+`export SENTINEL_OLLAMA_URL="http://$(ip route show default | awk '{print $3}'):11434"`.
+Ollama has no authentication, so keep that firewall rule narrow.
+
 `sentinel eval-llm` runs the agent on every event of a few synthetic scenes, which know which
 events are real, and reports whether `p_llm` separates real events from detector artifacts
 (AUROC), whether it is calibrated (ECE, Brier) and what the pipeline then decided. It is how
