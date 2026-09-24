@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+trusted_principal_arn = "arn:aws:iam::123456789012:user/your-user"
+budget_email          = "you@example.com"

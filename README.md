@@ -1,5 +1,7 @@
 # Sentinel Agent
 
+[![CI](https://github.com/Sahmah/sentinel-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Sahmah/sentinel-agent/actions/workflows/ci.yml)
+
 **A vision detector and an LLM reasoning agent, each giving a confidence score, fused into one decision to escalate or not.**
 
 Sentinel Agent watches a camera (or a synthetic scene), groups detections into events, and
@@ -107,6 +109,23 @@ is enough. Approve the `sentinel` server and ask:
 
 Pass `--no-store` to `demo` or `webcam` to skip saving.
 
+## Dashboard
+
+```bash
+cd frontend && npm install && npm run build && cd ..
+uv run sentinel serve             # http://127.0.0.1:8000
+```
+
+A Svelte 5 dashboard over the same event store: summary, filters and a review queue, a live
+feed (new events arrive over Server-Sent Events while `sentinel webcam` runs), and for each
+event the scene, the crop, the agent's reasoning and the three confidences (vision, agent,
+fused). The **Real** / **False alarm** buttons record a person's verdict; once a camera has
+five of each, `sentinel webcam` calibrates its `p_cv` on them, which is the live version of
+the calibration the demo does with synthetic ground truth. Desktop notifications fire for
+live alerts and review requests after an explicit opt-in. See
+[frontend/README.md](frontend/README.md); the API is `src/sentinel_agent/api.py`
+(localhost only: it serves camera images and has no auth).
+
 ## Using Claude on Bedrock
 
 ```bash
@@ -175,6 +194,7 @@ less independent (the model still never sees the detector's score).
 | Reason | `agent/` | One LLM call returns JSON with `severity`, `reasoning`, `confidence` and `confidence_basis`. If the reply can't be parsed twice, the event goes to `human_review` |
 | Decide | `calibration/fusion.py` | Weighted fusion of `p_cv` and `p_llm`. A gap above 0.35 counts as disagreement and goes to a human; low combined confidence is dismissed |
 | Snapshot | `snapshots.py` | When an event closes, a crop around its most confident detection (`<id>.jpg`) and the full frame with the box (`<id>_scene.jpg`) are saved to `snapshots/` |
+| Serve (HTTP) | `api.py` | Starlette API for the dashboard: events, summary, snapshots, an SSE stream of new events, and human review |
 | Store | `storage/` | One flat record per decided event. SQLite (keyset pagination) or DynamoDB (time-ordered GSI), behind the same `Storage` protocol |
 | Serve | `mcp_server/` | Tool logic as plain functions over `Storage`; `MCPServer` only adds schemas. Expected failures raise `ToolError`, anything else is masked |
 | Calibrate | `calibration/` | Platt scaling, isotonic regression, temperature scaling, self-consistency, ECE and Brier score |
@@ -200,12 +220,25 @@ These are part of the point of the project, not fine print.
 - **The demo "LLM" is rules.** It only sees what the real model would see, and exists so the
   pipeline is reproducible at zero cost.
 
+## AWS infrastructure
+
+[`infra/`](infra/README.md) is the Terraform for the AWS path: the DynamoDB table, a
+least-privilege role (Bedrock invoke on one inference profile, three DynamoDB calls, no
+wildcards), and an optional budget alert. `terraform test` checks it offline against a mocked
+provider; applying it is left to you, because it creates billable resources.
+
 ## Development
 
 ```bash
 uv run pytest                                  # 113 tests, no network, no AWS
 uv run ruff check . && uv run ruff format --check .
+cd frontend && npm run check && npm test          # dashboard
+cd infra && terraform test                         # infrastructure, offline
 ```
+
+CI runs all three on every push. Claude Code users get the project's skills in
+`.claude/skills/` (including do/don't rules for the Svelte dashboard) and two MCP servers from
+`.mcp.json`: this project's event store and the official Svelte docs/autofixer.
 
 Tests use `hypothesis` for aggregator and calibration invariants, `GenericFakeChatModel`
 for the graph nodes, moto for DynamoDB (the same storage tests run against both backends), and
@@ -226,8 +259,8 @@ the real model runs only when the `vision` extra and the weights are installed.
 - [x] Webcam confidence calibrated on human reviews
 - [ ] Grade vision on reviewed real footage
 - [ ] Phone notifications (Telegram or self-hosted ntfy)
-- [ ] Terraform for the AWS path (least-privilege IAM, Bedrock, DynamoDB, S3)
-- [ ] GitHub Actions CI
+- [x] Terraform for the AWS path (least-privilege IAM, Bedrock, DynamoDB), tested offline
+- [x] GitHub Actions CI (Python, dashboard, Terraform)
 
 ## License
 
