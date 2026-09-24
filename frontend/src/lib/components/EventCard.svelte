@@ -1,11 +1,16 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { cropUrl, type EventRecord } from '$lib/api';
-	import { describeDuration, formatTime } from '$lib/format';
+	import { describeDuration, formatDateTime, formatTime } from '$lib/format';
 	import ActionBadge from './ActionBadge.svelte';
 	import ConfidenceBar from './ConfidenceBar.svelte';
 
-	let { event, fresh = false }: { event: EventRecord; fresh?: boolean } = $props();
+	// `showDate`: lists that span several days need the date, not just the time.
+	let {
+		event,
+		fresh = false,
+		showDate = false
+	}: { event: EventRecord; fresh?: boolean; showDate?: boolean } = $props();
 
 	let crop = $derived(cropUrl(event));
 </script>
@@ -28,7 +33,9 @@
 			<ActionBadge action={event.action} />
 			<strong class="label">{event.label}</strong>
 			{#if event.entered_restricted_zone}<span class="zone">in zone</span>{/if}
-			<time datetime={event.occurred_at}>{formatTime(event.occurred_at)}</time>
+			<time datetime={event.occurred_at}
+				>{showDate ? formatDateTime(event.occurred_at) : formatTime(event.occurred_at)}</time
+			>
 		</div>
 		<p class="meta">
 			{event.camera_id} · {describeDuration(event.duration_seconds, event.detection_count)}

@@ -11,6 +11,10 @@ class Detection(BaseModel):
     bbox: tuple[int, int, int, int] = Field(description="x, y, width, height in pixels")
     raw_confidence: float = Field(ge=0.0, le=1.0)
     in_restricted_zone: bool = False
+    track_id: int | None = Field(
+        default=None,
+        description="Tracker identity, stable across frames; None without a tracker.",
+    )
     is_true_positive: bool | None = Field(
         default=None,
         description="Known ground truth, only populated for synthetic/labeled scenarios.",

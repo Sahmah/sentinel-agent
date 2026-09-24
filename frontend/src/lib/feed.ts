@@ -1,13 +1,13 @@
-import type { Action, EventRecord } from './api';
+import type { EventRecord } from './api';
 
 /** Put a record that arrived on the live stream at the top of the list, unless the
- * list already has it (a reconnect can replay it) or the active filter excludes it. */
+ * list already has it (a reconnect can replay it) or the view it is shown in excludes it. */
 export function mergeLive(
 	list: EventRecord[],
 	record: EventRecord,
-	filter: Action | null
+	belongs: (record: EventRecord) => boolean = () => true
 ): EventRecord[] {
-	if (filter && record.action !== filter) return list;
+	if (!belongs(record)) return list;
 	if (list.some((e) => e.id === record.id)) return list;
 	return [record, ...list];
 }

@@ -97,6 +97,10 @@ class DynamoDbStorage:
             conditions.append(Attr("camera_id").eq(filters.camera_id))
         if filters.action is not None:
             conditions.append(Attr("action").eq(filters.action))
+        if filters.review == "unreviewed":
+            conditions.append(Attr("review").not_exists())  # None fields are not stored
+        elif filters.review is not None:
+            conditions.append(Attr("review").eq(filters.review))
 
         start_key = None
         if cursor is not None:

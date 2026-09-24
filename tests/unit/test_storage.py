@@ -78,6 +78,16 @@ def test_query_is_newest_first_and_filters(store, make_record):
     assert _ids(store.query(window, limit=10)) == ["evt-002", "evt-001"]  # both ends inclusive
 
 
+def test_filters_by_review(store, make_record):
+    store.save(make_record(0, review="real"))
+    store.save(make_record(1, review="false_alarm"))
+    store.save(make_record(2))
+
+    assert _ids(store.query(EventFilter(review="real"), limit=10)) == ["evt-000"]
+    assert _ids(store.query(EventFilter(review="false_alarm"), limit=10)) == ["evt-001"]
+    assert _ids(store.query(EventFilter(review="unreviewed"), limit=10)) == ["evt-002"]
+
+
 def test_pagination_visits_every_match_once(store, make_record):
     for minute in range(12):
         store.save(make_record(minute, action="alert" if minute % 3 == 0 else "logged"))

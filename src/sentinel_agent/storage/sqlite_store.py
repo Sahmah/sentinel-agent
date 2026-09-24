@@ -67,6 +67,11 @@ class SqliteStorage:
         if filters.action is not None:
             where.append("action = ?")
             params.append(filters.action)
+        if filters.review == "unreviewed":
+            where.append("json_extract(data, '$.review') IS NULL")
+        elif filters.review is not None:
+            where.append("json_extract(data, '$.review') = ?")
+            params.append(filters.review)
         if filters.since is not None:
             where.append("occurred_at >= ?")
             params.append(iso_utc(filters.since))

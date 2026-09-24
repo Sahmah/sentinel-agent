@@ -6,8 +6,9 @@ Expected failures (unknown id, bad cursor, inverted time range) raise
 is masked by the server as a generic error.
 """
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
@@ -18,6 +19,7 @@ from sentinel_agent.storage.base import (
     EventPage,
     EventRecord,
     InvalidCursorError,
+    ReviewFilter,
     Storage,
     iso_utc,
 )
@@ -50,13 +52,53 @@ def _as_utc(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
+class DayCount(BaseModel):
+    day: str = Field(description="YYYY-MM-DD in the requested time zone")
+    total: int
+    by_action: dict[str, int]
+    needs_review: int = Field(description="human_review events nobody has given a verdict on")
+    reviewed_real: int
+    reviewed_false_alarm: int
+    disagreements: int
+
+
+class DaysSummary(BaseModel):
+    days: list[DayCount] = Field(description="Newest day first; days without events are left out")
+    needs_review: int = Field(description="Across all days")
+    truncated: bool = Field(
+        description=f"True if there were more than {MAX_SUMMARY_EVENTS} events; the oldest "
+        "days are then missing or partial"
+    )
+
+
 def _filters(
-    camera_id: str | None, action: Action | None, since: datetime | None, until: datetime | None
+    camera_id: str | None,
+    action: Action | None,
+    since: datetime | None,
+    until: datetime | None,
+    review: ReviewFilter | None = None,
 ) -> EventFilter:
     since, until = _as_utc(since), _as_utc(until)
     if since and until and since > until:
         raise ToolError(f"`since` ({since.isoformat()}) is after `until` ({until.isoformat()})")
-    return EventFilter(camera_id=camera_id, action=action, since=since, until=until)
+    return EventFilter(camera_id=camera_id, action=action, review=review, since=since, until=until)
+
+
+def _newest_records(storage: Storage, filters: EventFilter) -> tuple[list[EventRecord], bool]:
+    """Up to MAX_SUMMARY_EVENTS matching records, newest first, and whether more exist."""
+    records: list[EventRecord] = []
+    cursor = None
+    while len(records) < MAX_SUMMARY_EVENTS:
+        page = storage.query(filters, limit=MAX_PAGE, cursor=cursor)
+        records += page.events
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    return records[:MAX_SUMMARY_EVENTS], cursor is not None
+
+
+def _needs_review(record: EventRecord) -> bool:
+    return record.action == "human_review" and record.review is None
 
 
 def list_events(
@@ -66,10 +108,11 @@ def list_events(
     action: Action | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
+    review: ReviewFilter | None = None,
     limit: int = 20,
     cursor: str | None = None,
 ) -> EventPage:
-    filters = _filters(camera_id, action, since, until)
+    filters = _filters(camera_id, action, since, until, review)
     try:
         return storage.query(filters, limit=min(limit, MAX_PAGE), cursor=cursor)
     except InvalidCursorError as exc:
@@ -90,17 +133,7 @@ def summarize_events(
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> EventSummary:
-    filters = _filters(camera_id, None, since, until)
-    records: list[EventRecord] = []
-    cursor = None
-    while len(records) < MAX_SUMMARY_EVENTS:
-        page = storage.query(filters, limit=MAX_PAGE, cursor=cursor)
-        records += page.events
-        cursor = page.next_cursor
-        if cursor is None:
-            break
-    truncated = cursor is not None
-    records = records[:MAX_SUMMARY_EVENTS]
+    records, truncated = _newest_records(storage, _filters(camera_id, None, since, until))
 
     times = sorted(r.occurred_at for r in records)
     return EventSummary(
@@ -115,4 +148,35 @@ def summarize_events(
         reviewed_real=sum(r.review == "real" for r in records),
         reviewed_false_alarm=sum(r.review == "false_alarm" for r in records),
         truncated=truncated,
+    )
+
+
+def events_by_day(
+    storage: Storage, *, tz: str = "UTC", camera_id: str | None = None
+) -> DaysSummary:
+    """Counts per calendar day in `tz` (an IANA name such as "America/Sao_Paulo"), so
+    the days match the viewer's clock rather than UTC."""
+    try:
+        zone = ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ToolError(f"Unknown time zone {tz!r}; use an IANA name like 'Europe/Lisbon'") from exc
+    records, truncated = _newest_records(storage, _filters(camera_id, None, None, None))
+
+    by_day: dict[str, list[EventRecord]] = defaultdict(list)
+    for r in records:
+        by_day[r.occurred_at.astimezone(zone).date().isoformat()].append(r)
+    days = [
+        DayCount(
+            day=day,
+            total=len(rs),
+            by_action=dict(Counter(r.action for r in rs).most_common()),
+            needs_review=sum(_needs_review(r) for r in rs),
+            reviewed_real=sum(r.review == "real" for r in rs),
+            reviewed_false_alarm=sum(r.review == "false_alarm" for r in rs),
+            disagreements=sum(r.disagreement for r in rs),
+        )
+        for day, rs in sorted(by_day.items(), reverse=True)
+    ]
+    return DaysSummary(
+        days=days, needs_review=sum(d.needs_review for d in days), truncated=truncated
     )

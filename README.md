@@ -12,7 +12,7 @@ combined, and when the two **disagree**, the event goes to a human instead of be
 ```mermaid
 flowchart LR
   S[Camera / video / synthetic scene] --> D[Detector<br/>YOLO26n or classical CV]
-  D --> A[Event aggregator<br/>greedy tracker]
+  D --> A[Event aggregator<br/>ByteTrack ids or greedy]
   A --> T{triage}
   T -- irrelevant --> X[dismissed<br/>no LLM call]
   T -- person or zone --> R[reason<br/>1 LLM call → p_llm]
@@ -117,14 +117,17 @@ uv run sentinel serve             # http://127.0.0.1:8000
 ```
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="Dashboard: summary tiles, filters, and live events with crops and vision/agent confidence bars" width="49%">
+  <img src="docs/images/dashboard.png" alt="Dashboard home: tiles with the pending-decision count, an events-per-day chart, and the list of days" width="49%">
   <img src="docs/images/event-detail.png" alt="Event page: scene, crop, the agent's reasoning, three confidences and the review buttons" width="49%">
 </p>
 
-A Svelte 5 dashboard over the same event store: summary, filters and a review queue, a live
-feed (new events arrive over Server-Sent Events while `sentinel webcam` runs), and for each
-event the scene, the crop, the agent's reasoning and the three confidences (vision, agent,
-fused). The **Real** / **False alarm** buttons record a person's verdict; once a camera has
+A Svelte 5 dashboard over the same event store. The home page leads with how many events
+are waiting for your decision (one click opens that queue, across all days), an events-per-day
+chart, and the list of days with their counts. Opening a day shows its events in tabs by what
+a person said (**All**, **Needs you**, **Real**, **False alarms**), with the system's decision
+(alert, review, logged, dismissed) as a second filter. New events arrive live over
+Server-Sent Events while `sentinel webcam` runs, and each event shows the scene, the crop, the
+agent's reasoning and the three confidences (vision, agent, fused). The **Real** / **False alarm** buttons record a person's verdict; once a camera has
 five of each, `sentinel webcam` calibrates its `p_cv` on them, which is the live version of
 the calibration the demo does with synthetic ground truth. Desktop notifications fire for
 live alerts and review requests after an explicit opt-in. See
@@ -217,12 +220,12 @@ less independent (the model still never sees the detector's score).
 | Stage | Module | What it does |
 | --- | --- | --- |
 | Detect | `detection/` | `Detector` protocol with two implementations: a classical OpenCV contour detector (for the synthetic scene) and YOLO26n (for real video) |
-| Aggregate | `events/` | Greedy tracker that groups detections into events by time gap and center distance. A streaming version closes each event once its object has been gone for `--gap` seconds |
+| Aggregate | `events/` | Groups detections into events. On live video YOLO runs with ByteTrack, and an event is one track id; synthetic scenes use a greedy rule (time gap + center distance). A streaming version closes each event once its object has been gone for `--gap` seconds |
 | Triage | `agent/graph.py` | Cheap filter: non-person objects outside the zone never cost an LLM call. On live video, neither do one-frame person flickers outside the zone |
 | Reason | `agent/` | One LLM call returns JSON with `severity`, `reasoning`, `confidence` and `confidence_basis`. If the reply can't be parsed twice, the event goes to `human_review` |
 | Decide | `calibration/fusion.py` | Weighted fusion of `p_cv` and `p_llm`. A gap above 0.35 counts as disagreement and goes to a human; low combined confidence is dismissed |
 | Snapshot | `snapshots.py` | When an event closes, a crop around its most confident detection (`<id>.jpg`) and the full frame with the box (`<id>_scene.jpg`) are saved to `snapshots/` |
-| Serve (HTTP) | `api.py` | Starlette API for the dashboard: events, summary, snapshots, an SSE stream of new events, and human review |
+| Serve (HTTP) | `api.py` | Starlette API for the dashboard: events (filterable by decision, verdict and time), per-day counts, summary, snapshots, an SSE stream of new events, and human review |
 | Store | `storage/` | One flat record per decided event. SQLite (keyset pagination) or DynamoDB (time-ordered GSI), behind the same `Storage` protocol |
 | Serve | `mcp_server/` | Tool logic as plain functions over `Storage`; `MCPServer` only adds schemas. Expected failures raise `ToolError`, anything else is masked |
 | Calibrate | `calibration/` | Platt scaling, isotonic regression, temperature scaling, self-consistency, ECE and Brier score |
@@ -243,8 +246,11 @@ These are part of the point of the project, not fine print.
 - **The fusion is deliberately simple.** It treats the two signals as independent evidence.
   That is a smaller stretch with one detector and one agent than with a swarm, but it is still
   an assumption.
-- **The tracker is minimal.** Two people crossing each other can swap or merge events; a real
-  tracker (e.g. ByteTrack) would fix that.
+- **Only live video is tracked.** The webcam path uses ByteTrack, so two people crossing each
+  other keep separate events. ByteTrack matches on motion only, so after a long occlusion a
+  person can come back with a new id and a new event (`--tracker botsort.yaml` adds appearance
+  matching, at a CPU cost). The synthetic scenes still use the greedy time-gap + center-distance
+  rule, which can merge objects that cross.
 - **The demo "LLM" is rules.** It only sees what the real model would see, and exists so the
   pipeline is reproducible at zero cost.
 

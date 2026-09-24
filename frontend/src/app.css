@@ -13,6 +13,10 @@
 	--dismissed: #6b7280;
 	--cv: #2f6fde;
 	--llm: #8e44ad;
+	/* Chart series (validated pair: colorblind-safe, 3:1 on the surface). */
+	--series-attention: #eb6834;
+	--series-routine: #2a78d6;
+	--grid: #e6e8ec;
 	--radius: 10px;
 	--shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.04);
 	font-family:
@@ -39,6 +43,9 @@
 		--dismissed: #9aa1ad;
 		--cv: #6ea0ff;
 		--llm: #c08ae0;
+		--series-attention: #d95926;
+		--series-routine: #3987e5;
+		--grid: #2a2f37;
 		--shadow: none;
 	}
 }

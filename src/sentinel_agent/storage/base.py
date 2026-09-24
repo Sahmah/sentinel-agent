@@ -23,6 +23,8 @@ def iso_utc(dt: datetime) -> str:
 
 
 Verdict = Literal["real", "false_alarm"]
+# A verdict, or "unreviewed" for events nobody has given one yet.
+ReviewFilter = Literal["real", "false_alarm", "unreviewed"]
 
 
 class EventRecord(BaseModel):
@@ -77,6 +79,7 @@ class EventRecord(BaseModel):
 class EventFilter(BaseModel):
     camera_id: str | None = None
     action: Action | None = None
+    review: ReviewFilter | None = None
     since: AwareDatetime | None = Field(default=None, description="Inclusive")
     until: AwareDatetime | None = Field(default=None, description="Inclusive")
 

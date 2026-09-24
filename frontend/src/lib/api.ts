@@ -4,6 +4,8 @@
 export type Action = 'alert' | 'human_review' | 'logged' | 'dismissed';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 export type Verdict = 'real' | 'false_alarm';
+/** A verdict, or 'unreviewed' for events nobody has given one yet. */
+export type ReviewFilter = Verdict | 'unreviewed';
 
 export interface EventRecord {
 	id: string;
@@ -51,6 +53,31 @@ export interface EventSummary {
 	truncated: boolean;
 }
 
+export interface DayCount {
+	day: string; // YYYY-MM-DD in the time zone the days were asked for
+	total: number;
+	by_action: Partial<Record<Action, number>>;
+	needs_review: number;
+	reviewed_real: number;
+	reviewed_false_alarm: number;
+	disagreements: number;
+}
+
+export interface DaysSummary {
+	days: DayCount[];
+	needs_review: number;
+	truncated: boolean;
+}
+
+export interface EventQuery {
+	action?: Action | null;
+	review?: ReviewFilter | null;
+	since?: string | null;
+	until?: string | null;
+	cursor?: string | null;
+	limit?: number;
+}
+
 export const ACTIONS: Action[] = ['alert', 'human_review', 'logged', 'dismissed'];
 
 export class ApiError extends Error {}
@@ -71,17 +98,26 @@ async function request<T>(fetcher: Fetch, url: string, init?: RequestInit): Prom
 	return body as T;
 }
 
-export function getSummary(fetcher: Fetch = fetch): Promise<EventSummary> {
-	return request(fetcher, '/api/summary');
+export function getSummary(
+	range: { since?: string | null; until?: string | null } = {},
+	fetcher: Fetch = fetch
+): Promise<EventSummary> {
+	const query = new URLSearchParams();
+	if (range.since) query.set('since', range.since);
+	if (range.until) query.set('until', range.until);
+	return request(fetcher, `/api/summary?${query}`);
 }
 
-export function listEvents(
-	params: { action?: Action | null; cursor?: string | null; limit?: number } = {},
-	fetcher: Fetch = fetch
-): Promise<EventPage> {
+export function getDays(timeZone: string, fetcher: Fetch = fetch): Promise<DaysSummary> {
+	return request(fetcher, `/api/days?${new URLSearchParams({ tz: timeZone })}`);
+}
+
+export function listEvents(params: EventQuery = {}, fetcher: Fetch = fetch): Promise<EventPage> {
 	const query = new URLSearchParams({ limit: String(params.limit ?? 24) });
-	if (params.action) query.set('action', params.action);
-	if (params.cursor) query.set('cursor', params.cursor);
+	for (const key of ['action', 'review', 'since', 'until', 'cursor'] as const) {
+		const value = params[key];
+		if (value) query.set(key, value);
+	}
 	return request(fetcher, `/api/events?${query}`);
 }
 
