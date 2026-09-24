@@ -74,7 +74,7 @@
 
 <LiveStatus status={feed.status} />
 
-<BackLink fallback="/" label="Days" />
+<BackLink fallback="/" label="Dashboard" />
 <h1>
 	{title}
 	{#if filter.day}<time class="muted" datetime={filter.day}>{filter.day}</time>{/if}
@@ -82,7 +82,15 @@
 
 <SummaryTiles {summary} />
 
-<nav class="tabs" aria-label="Filter by your verdict">
+<!-- Tabs and filters change what this page shows, not which page it is: they replace
+     the history entry (and keep the scroll), so "back" leaves the page instead of
+     stepping through every tab that was clicked. -->
+<nav
+	class="tabs"
+	aria-label="Filter by your verdict"
+	data-sveltekit-replacestate
+	data-sveltekit-noscroll
+>
 	{#each VIEWS as view (view)}
 		<a
 			href={resolve(`/events?${params({ view })}`)}
@@ -93,7 +101,12 @@
 </nav>
 
 {#if filter.view !== 'pending'}
-	<nav class="filters" aria-label="Filter by the system's decision">
+	<nav
+		class="filters"
+		aria-label="Filter by the system's decision"
+		data-sveltekit-replacestate
+		data-sveltekit-noscroll
+	>
 		<span class="muted">System decided:</span>
 		<a href={resolve(`/events?${params({ action: null })}`)} aria-current={filter.action === null ? 'page' : undefined}>Any</a>
 		{#each ACTIONS as action (action)}

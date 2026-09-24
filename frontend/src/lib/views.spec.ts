@@ -69,7 +69,7 @@ describe('pageLabel', () => {
 	const label = (path: string) => pageLabel(new URL(path, 'http://x'));
 
 	it('names the page a back link returns to', () => {
-		expect(label('/')).toBe('Days');
+		expect(label('/')).toBe('Dashboard');
 		expect(label('/events?view=pending')).toBe('Needs your decision');
 		expect(label('/events')).toBe('All events');
 		expect(label('/events?view=false_alarm')).toBe('All events · False alarms');

@@ -25,6 +25,19 @@ describe('history mirror', () => {
 		expect(previous(h)).toBeNull();
 	});
 
+	it('dashboard -> list -> tabs -> event: back goes to the list tab, then the dashboard', () => {
+		let h = walk(
+			{ type: 'enter', path: '/' },
+			{ type: 'push', path: '/events?view=pending' },
+			{ type: 'replace', path: '/events?view=real' },
+			{ type: 'replace', path: '/events?view=false_alarm' },
+			{ type: 'push', path: '/events/abc' }
+		);
+		expect(previous(h)).toBe('/events?view=false_alarm');
+		h = step(h, { type: 'popstate', path: '/events?view=false_alarm', delta: -1 });
+		expect(previous(h)).toBe('/');
+	});
+
 	it('a new page after going back drops the old forward entries', () => {
 		let h = walk(
 			{ type: 'enter', path: '/' },

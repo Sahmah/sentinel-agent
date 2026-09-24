@@ -18,6 +18,10 @@ class AppHistory {
 		if (nav.type === 'enter') this.#stack = step(this.#stack, { type: 'enter', path });
 		else if (nav.type === 'popstate')
 			this.#stack = step(this.#stack, { type: 'popstate', path, delta: nav.delta });
+		// Within one page, links only change tabs and filters, and those replace the
+		// history entry (data-sveltekit-replacestate) instead of adding one.
+		else if (nav.from?.route.id === nav.to.route.id)
+			this.#stack = step(this.#stack, { type: 'replace', path });
 		else this.#stack = step(this.#stack, { type: 'push', path });
 	}
 }

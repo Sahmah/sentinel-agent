@@ -26,7 +26,7 @@
 	<a class="brand" href={resolve('/')}>Sentinel</a>
 	<nav aria-label="Main">
 		<a href={resolve('/')} aria-current={page.url.pathname === '/' || (onDay && !pendingView) ? 'page' : undefined}
-			>Days</a
+			>Dashboard</a
 		>
 		<a
 			href={resolve('/events')}

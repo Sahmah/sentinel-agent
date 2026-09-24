@@ -67,7 +67,7 @@ export function filterParams(filter: EventsFilter): string {
 
 /** What a "back" link to an in-app URL should say, e.g. "Needs your decision" or "Today". */
 export function pageLabel(url: URL): string {
-	if (url.pathname === '/') return 'Days';
+	if (url.pathname === '/') return 'Dashboard';
 	if (url.pathname.startsWith('/events/')) return 'Event';
 	const view = parseView(url.searchParams.get('view'));
 	const day = parseDay(url.searchParams.get('day'));
