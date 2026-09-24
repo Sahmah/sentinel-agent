@@ -21,11 +21,12 @@ from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from sentinel_agent.agent.graph import DecisionPolicy, build_graph
+from sentinel_agent.agent.graph import DecisionPolicy, build_graph, triage
 from sentinel_agent.agent.llm import build_llm, vision_enabled
 from sentinel_agent.capture import LatestFrameReader
 from sentinel_agent.events.aggregator import cluster_into_events
 from sentinel_agent.events.models import Event
+from sentinel_agent.memory import ReviewMemory, memory_enabled
 from sentinel_agent.pipeline import (
     Decision,
     calibrator_from_reviews,
@@ -71,7 +72,13 @@ def cmd_demo(args: argparse.Namespace) -> int:
     frames, detections = synthetic_scene(args.seed)
     events = cluster_into_events(detections)
     vision = vision_enabled()
-    graph = build_graph(build_llm(), vision=vision)
+    memory = None
+    if memory_enabled() and not args.no_store:
+        memory = ReviewMemory.from_storage(
+            build_storage(), events[0].camera_id if events else "cam-01", image_root=snapshot_dir()
+        )
+        print(_memory_banner(memory))
+    graph = build_graph(build_llm(), vision=vision, memory=memory)
     # Snapshots are cut before deciding: with vision on, the agent looks at them.
     snapshots: dict[str, str | None] = {}
     if vision or not args.no_store:
@@ -272,11 +279,17 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     policy = DecisionPolicy(min_person_detections_outside_zone=args.min_detections)
     save = None
     calibrator = None
+    memory = None
     frame_buffer = FrameBuffer()
     snapshots: dict[str, str] = {}  # event id -> crop file, written before the event is queued
     if not args.no_store:
         storage, run_id = build_storage(), uuid.uuid4().hex[:12]
         calibrator, n_reviewed = calibrator_from_reviews(storage, args.camera_id)
+        if memory_enabled():
+            # Refreshed every minute, so reviews made in the dashboard during this run count.
+            memory = ReviewMemory.from_storage(
+                storage, args.camera_id, image_root=snapshot_dir(), refresh_seconds=60
+            )
 
         def save(d: Decision) -> None:
             # run_started_at is set when the clock starts, before any event can close.
@@ -292,7 +305,7 @@ def cmd_webcam(args: argparse.Namespace) -> int:
 
     vision = vision_enabled()
     worker = EventWorker(
-        build_graph(build_llm(), policy=policy, vision=vision),
+        build_graph(build_llm(), policy=policy, vision=vision, memory=memory),
         calibrator=calibrator,
         snapshot_for=lambda event_id: _snapshot_path(snapshots.get(event_id)),
         save=save,
@@ -312,6 +325,7 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     step = 1 if is_camera else max(1, round(source_fps / args.fps))
 
     print(_agent_banner())
+    print(_memory_banner(memory))
     if calibrator is not None:
         print(f"p_cv is calibrated on {n_reviewed} events you reviewed for this camera.")
     else:
@@ -417,7 +431,18 @@ def cmd_eval_llm(args: argparse.Namespace) -> int:
             "so an image-reading model would rightly doubt them; vision needs real, reviewed\n"
             "video to be graded.\n"
         )
-    graph = build_graph(build_llm())
+    memory = None
+    if args.memory:
+        # Stand-in reviews: the ground truth of other scenes (seeds 3000+), text only.
+        reviewed = [
+            e
+            for seed in range(3000, 3000 + args.memory)
+            for e in cluster_into_events(synthetic_detections(seed))
+            if triage({"event": e.model_dump()})["triage_passed"]
+        ]
+        memory = ReviewMemory.from_events(reviewed)
+        print(f"Memory: {len(memory)} reviewed examples from {args.memory} other scenes.")
+    graph = build_graph(build_llm(), memory=memory)
     print(f"Evaluating on synthetic seeds {args.seeds} (backend: {_backend_name()})\n")
     print(f"{'seed':>4} {'label':<7} {'dets':>4} {'zone':<4} {'truth':<5} {'p_llm':>5}  action")
 
@@ -457,6 +482,7 @@ def cmd_eval_llm(args: argparse.Namespace) -> int:
             {
                 "backend": _backend_name(),
                 "vision": False,
+                "memory_scenes": args.memory,
                 "seeds": args.seeds,
                 "metrics": m,
                 "events": [r.__dict__ for r in report.results],
@@ -466,6 +492,14 @@ def cmd_eval_llm(args: argparse.Namespace) -> int:
         )
     print(f"Metrics written to {path}")
     return 0
+
+
+def _memory_banner(memory) -> str:
+    if memory is None:
+        return "Memory: off (SENTINEL_LLM_MEMORY=0 or not storing events)."
+    if len(memory) == 0:
+        return "Memory: no reviewed events yet; review some in the dashboard to teach the agent."
+    return f"Memory: {len(memory)} reviewed events; the agent sees the most similar ones."
 
 
 def _agent_banner() -> str:
@@ -587,6 +621,13 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--seeds", default="1-3", help='scenes to evaluate, e.g. "1-5" or "1,4"')
     ev.add_argument("--calibration-scenes", type=int, default=5)
     ev.add_argument("--json", help="where to write the metrics (default: lab/evals/)")
+    ev.add_argument(
+        "--memory",
+        type=int,
+        default=0,
+        metavar="N",
+        help="give the agent reviewed examples from N other scenes (default: none)",
+    )
     ev.set_defaults(func=cmd_eval_llm)
 
     rp = sub.add_parser("report", help="write a Markdown report of recorded events to lab/")

@@ -169,6 +169,7 @@ prompt changes are judged here: with numbers, on 38 events (7 real).
 | gemma3:4b, prompt v1 | **0.240** | 0.551 | 0.493 | **0/7** | 0 | 0 |
 | gemma3:4b, prompt v2 | 1.000 | 0.441 | 0.262 | 7/7 | 0 | 7 |
 | gemma3:4b, prompt v3 (current) | 1.000 | 0.362 | 0.193 | 7/7 | 0 | 14 |
+| gemma3:4b, prompt v3 + review memory | 1.000 | **0.293** | **0.129** | 7/7 | 0 | 21 |
 
 With the first prompt, the 4B model read "90 detections" as a sign of an artifact and scored
 worse than chance. Explaining what the evidence means (about 5 frames per second, artifacts
@@ -178,6 +179,21 @@ the model is unsure about flickers, it disagrees with a detector that is sure, a
 disagreement goes to a person. gemma3:4b took about 8 s per event on an 8 GB AMD RX 580
 (Vulkan). Note what this does and does not show: from metadata alone, an LLM can at best
 match the rules. Its real advantage should come from seeing the snapshot.
+
+### Learning from reviews: the agent's memory
+
+Every verdict a person gives in the dashboard becomes an example. Before the agent reasons about
+a new event, it is shown the most similar events from the same camera that someone already
+reviewed (same label, same side of the zone, a track of similar length), with the verdict and,
+when vision is on, their crops. A "dog" that was marked a false alarm twice makes the next
+similar "dog" less credible. Nothing is trained: it is retrieval into the prompt, it applies
+from the first review, and reviews made during a webcam run are picked up within a minute. It is
+on by default; `SENTINEL_LLM_MEMORY=0` turns it off.
+
+`sentinel eval-llm --memory 5` measures it, with the ground truth of five other synthetic scenes
+standing in for reviews. On gemma3:4b it lowered ECE from 0.362 to 0.293 and Brier from 0.193 to
+0.129 (row above), mostly by making the model less confident about flickers; the extra human
+reviews come from the agent now disagreeing more often with a confident detector.
 
 ### Letting the agent see the snapshot
 
@@ -242,7 +258,7 @@ provider; applying it is left to you, because it creates billable resources.
 ## Development
 
 ```bash
-uv run pytest                                  # 113 tests, no network, no AWS
+uv run pytest                                  # 125 tests, no network, no AWS
 uv run ruff check . && uv run ruff format --check .
 cd frontend && npm run check && npm test          # dashboard
 cd infra && terraform test                         # infrastructure, offline
@@ -293,7 +309,9 @@ the real model runs only when the `vision` extra and the weights are installed.
 - [x] Vision LLM: send the snapshot to the reasoning model (`SENTINEL_LLM_VISION=1`)
 - [x] HTTP API, live dashboard (Svelte), desktop notifications, human review
 - [x] Webcam confidence calibrated on human reviews
-- [ ] Grade vision on reviewed real footage
+- [x] Review memory: similar reviewed events shown to the agent as examples
+- [ ] Grade vision and memory on reviewed real footage (`eval-reviews`)
+- [ ] Fine-tune YOLO on reviewed crops (pre-label, check in Label Studio, train)
 - [ ] Phone notifications (Telegram or self-hosted ntfy)
 - [x] Terraform for the AWS path (least-privilege IAM, Bedrock, DynamoDB), tested offline
 - [x] GitHub Actions CI (Python, dashboard, Terraform)

@@ -21,10 +21,12 @@ Deliberate choices, the first two from the confidence-calibration skill (§2, §
 
 import base64
 import json
+from collections.abc import Sequence
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from sentinel_agent.events.models import Event
+from sentinel_agent.memory import Example
 
 SYSTEM_PROMPT = """You review events from a camera monitoring pipeline. Each event is a \
 group of detections of one object, clustered over time. Decide how severe the event is \
@@ -83,23 +85,53 @@ if it does not show a {label} (a shadow, a reflection, a coat on a chair). The i
 show how long the track lasted: keep weighing the track as described above."""
 
 
+EXAMPLES_NOTE = """
+
+<reviewed_examples>
+Past events from this camera that a person has already reviewed. They are the best evidence of \
+what this camera's detections look like when real and when not: if this event resembles past \
+false alarms, lower your confidence; if it resembles past real events, raise it. Say in your \
+reasoning whether they influenced you.
+{lines}
+</reviewed_examples>"""
+
+
 def build_messages(
-    event: Event, *, feedback: str | None = None, image: bytes | None = None
+    event: Event,
+    *,
+    feedback: str | None = None,
+    image: bytes | None = None,
+    examples: Sequence[tuple[Example, bytes | None]] = (),
 ) -> list[BaseMessage]:
     """`image`: the event's JPEG crop, for vision-capable models (sent as a
-    standard LangChain image block, which Ollama and Bedrock both accept)."""
+    standard LangChain image block, which Ollama and Bedrock both accept).
+    `examples`: reviewed past events (see memory.py), each with its crop when
+    vision is on."""
     body = f"{EVENT_OPEN}\n{json.dumps(event_payload(event), indent=2)}\n{EVENT_CLOSE}"
     if image is not None:
         body += IMAGE_NOTE.format(label=event.label)
+    images = [image] if image is not None else []
+    if examples:
+        lines = []
+        for i, (example, example_image) in enumerate(examples, start=1):
+            line = f"{i}. {example.describe()}"
+            if example_image is not None:
+                images.append(example_image)
+                line += f" (image {len(images)})"
+            lines.append(line)
+        body += EXAMPLES_NOTE.format(lines="\n".join(lines))
+        if image is not None and len(images) > 1:
+            body += "\nImage 1 is this event's crop; the others belong to the examples."
     if feedback:
         body += (
             "\n\nYour previous answer could not be parsed: "
             f"{feedback}\nReply again with only the JSON object."
         )
-    if image is None:
+    if not images:
         return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=body)]
-    content = [
-        {"type": "text", "text": body},
-        {"type": "image", "base64": base64.b64encode(image).decode(), "mime_type": "image/jpeg"},
+    content: list[dict] = [{"type": "text", "text": body}]
+    content += [
+        {"type": "image", "base64": base64.b64encode(img).decode(), "mime_type": "image/jpeg"}
+        for img in images
     ]
     return [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=content)]

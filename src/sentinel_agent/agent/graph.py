@@ -28,6 +28,7 @@ from sentinel_agent.agent.prompts import build_messages
 from sentinel_agent.agent.state import Action, EventState
 from sentinel_agent.calibration.fusion import should_escalate
 from sentinel_agent.events.models import Event
+from sentinel_agent.memory import ReviewMemory
 
 
 @dataclass(frozen=True)
@@ -92,13 +93,20 @@ def make_reason_node(
     max_parse_attempts: int = 2,
     sleep: Callable[[float], None] = time.sleep,
     vision: bool = False,
+    memory: ReviewMemory | None = None,
+    max_example_images: int = 2,
 ) -> Callable[[EventState], dict]:
     def reason(state: EventState) -> dict:
         event = Event.model_validate(state["event"])
         image = _read_snapshot(state.get("snapshot_path")) if vision else None
+        examples = []
+        for i, example in enumerate(memory.examples_for(event) if memory else []):
+            # Each image costs model time; only the closest examples get theirs.
+            with_image = vision and i < max_example_images
+            examples.append((example, _read_snapshot(example.image_path) if with_image else None))
         feedback: str | None = None
         for _ in range(max_parse_attempts):
-            messages = build_messages(event, feedback=feedback, image=image)
+            messages = build_messages(event, feedback=feedback, image=image, examples=examples)
             reply = invoke_with_backoff(llm, messages, sleep=sleep)
             try:
                 out = parse_reasoning(reply.text)
@@ -170,9 +178,11 @@ def build_graph(
     policy: DecisionPolicy | None = None,
     sleep: Callable[[float], None] = time.sleep,
     vision: bool = False,
+    memory: ReviewMemory | None = None,
 ):
     """`vision=True` attaches each event's snapshot to the reasoning prompt; the
-    model must accept images (e.g. gemma3 on Ollama, Claude on Bedrock)."""
+    model must accept images (e.g. gemma3 on Ollama, Claude on Bedrock).
+    `memory` adds similar events a person already reviewed (see memory.py)."""
     policy = policy or DecisionPolicy()
     builder = StateGraph(EventState)
     builder.add_node(
@@ -181,7 +191,7 @@ def build_graph(
             triage, min_person_detections_outside_zone=policy.min_person_detections_outside_zone
         ),
     )
-    builder.add_node("reason", make_reason_node(llm, sleep=sleep, vision=vision))
+    builder.add_node("reason", make_reason_node(llm, sleep=sleep, vision=vision, memory=memory))
     builder.add_node("decide", make_decide_node(policy))
     builder.add_edge(START, "triage")
     builder.add_conditional_edges("triage", route_after_triage, {"reason": "reason", END: END})
