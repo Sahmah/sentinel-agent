@@ -214,7 +214,8 @@ def _draw_preview(cv2, frame, zone, detections, status: str) -> None:
         cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
         cv2.putText(
             frame,
-            f"{det.label} {det.raw_confidence:.2f}",
+            f"{det.label}{'' if det.track_id is None else f' #{det.track_id}'} "
+            f"{det.raw_confidence:.2f}",
             (x, max(12, y - 6)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
@@ -272,7 +273,12 @@ def cmd_webcam(args: argparse.Namespace) -> int:
             )
         return 1
 
-    detector = YoloDetector(load_yolo(args.model), zone_fraction=args.zone or DEFAULT_ZONE_FRACTION)
+    detector = YoloDetector(
+        load_yolo(args.model),
+        zone_fraction=args.zone or DEFAULT_ZONE_FRACTION,
+        classes=args.classes,
+        tracker=None if args.tracker == "none" else args.tracker,
+    )
     # The first inference is ~40x slower (lazy init); pay for it before the clock starts.
     detector.detect(np.zeros((480, 640, 3), np.uint8), camera_id="", frame_index=0, timestamp=0)
     aggregator = StreamingAggregator(gap_seconds=args.gap)
@@ -405,6 +411,13 @@ def cmd_webcam(args: argparse.Namespace) -> int:
         )
         print(f"Report: {report}")
     return 0
+
+
+def _parse_classes(text: str) -> tuple[str, ...] | None:
+    """ "person,car" -> ("person", "car"); "all" -> None (keep every class)."""
+    if text.strip() == "all":
+        return None
+    return tuple(c.strip() for c in text.split(",") if c.strip())
 
 
 def _parse_seeds(text: str) -> list[int]:
@@ -593,6 +606,17 @@ def main(argv: list[str] | None = None) -> int:
         "--gap", type=float, default=1.5, help="seconds unseen before an event closes"
     )
     webcam.add_argument("--zone", type=_parse_zone, help="restricted zone as x,y,w,h fractions")
+    webcam.add_argument(
+        "--classes",
+        type=_parse_classes,
+        default=("person",),
+        help='COCO class names to detect, comma-separated, or "all"',
+    )
+    webcam.add_argument(
+        "--tracker",
+        default="bytetrack.yaml",
+        help='Ultralytics tracker config (bytetrack.yaml, botsort.yaml, a file of yours) or "none"',
+    )
     webcam.add_argument(
         "--min-detections",
         type=int,

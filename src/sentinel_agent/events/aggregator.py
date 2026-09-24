@@ -5,6 +5,12 @@ within `gap_seconds` of that event's latest detection AND its box center is
 within `max_distance_px` of it (a minimal greedy tracker). Otherwise it starts
 a new event. Without the spatial check, two unrelated objects with the same
 label on the same camera would merge into one event.
+
+When the detector has a tracker (YOLO + ByteTrack), detections carry a
+`track_id` and that identity replaces the distance check: detections of the
+same track join while the time gap allows, so two people crossing each other
+stay separate events. Untracked detections (the classical detector, synthetic
+scenes) keep the greedy distance rule.
 """
 
 import math
@@ -32,12 +38,14 @@ def cluster_detections(
     """The clusters themselves (each sorted by time), for callers that need to
     know which detections went into which event — e.g. a streaming aggregator
     that removes a closed event's detections from its buffer."""
-    groups: dict[tuple[str, str], list[Detection]] = defaultdict(list)
+    groups: dict[tuple[str, str, int | None], list[Detection]] = defaultdict(list)
     for d in detections:
-        groups[(d.camera_id, d.label)].append(d)
+        groups[(d.camera_id, d.label, d.track_id)].append(d)
 
     clusters: list[list[Detection]] = []
-    for group in groups.values():
+    for (_, _, track_id), group in groups.items():
+        # One track is one object: only the time gap can split it.
+        max_dist = max_distance_px if track_id is None else math.inf
         group.sort(key=lambda d: (d.timestamp, d.bbox))
         open_clusters: list[list[Detection]] = []
         for d in group:
@@ -48,7 +56,7 @@ def cluster_detections(
                 if d.timestamp - last.timestamp > gap_seconds or last.timestamp == d.timestamp:
                     continue
                 dist = _center_distance(last, d)
-                if dist <= max_distance_px and dist < best_dist:
+                if dist <= max_dist and dist < best_dist:
                     best, best_dist = cluster, dist
             if best is None:
                 open_clusters.append([d])

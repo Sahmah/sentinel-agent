@@ -37,10 +37,17 @@ uv run sentinel webcam --zone 0.5,0,0.5,1    # restricted zone = right half of t
 | `--source` | `0` | Camera index or video path |
 | `--fps` | `5` | Frames analysed per second (YOLO26n takes ~75 ms/frame on a laptop CPU) |
 | `--zone` | `0.58,0.05,0.4,0.9` | Restricted zone as `x,y,w,h` fractions of the frame (drawn in red) |
+| `--classes` | `person` | COCO class names to detect, comma-separated (`person,car`), or `all` |
+| `--tracker` | `bytetrack.yaml` | Ultralytics tracker config: `bytetrack.yaml`, `botsort.yaml`, a YAML of your own, or `none` |
 | `--gap` | `1.5` | Seconds an object must be unseen before its event closes and is reasoned about |
 | `--min-detections` | `3` | Frames a person **outside** the zone must be seen in before the agent reasons about it (anything in the zone always goes to the agent) |
 | `--max-seconds` | none | Stop after this long |
 | `--no-window` | off | No preview window (headless) |
+
+Boxes go through ByteTrack, which gives each object an id that stays with it across frames;
+an event is one id, so two people crossing each other stay separate events. The preview shows
+the id next to the label (`person #3`). YOLO26 has no NMS step, so there is no `iou` to tune:
+duplicate boxes in one frame are not the issue, keeping identities across frames is.
 
 Each event is printed when it closes: when the object has been gone for `--gap` seconds,
 or after 30 s for someone who stays in view. Events with a person, or anything inside the
@@ -118,8 +125,10 @@ above). To query them over MCP from WSL, point the server at that file:
   truth, so there is nothing to fit Platt scaling on; `p_cv` is YOLO's raw box confidence.
   A real deployment would fit the calibrator on a human-reviewed history of this camera's
   true/false positives, and the result only holds while the scene stays similar.
-- The aggregator is a minimal greedy tracker (time gap + center distance). Two people
-  crossing each other can swap or merge events. A real tracker (e.g. ByteTrack) would fix
-  that.
+- ByteTrack matches on motion only. Someone hidden for longer than its `track_buffer`
+  (30 frames, 6 s at 5 fps) comes back with a new id, so a new event. `--tracker botsort.yaml`
+  adds appearance matching, at a CPU cost. The tracker's thresholds (`track_high_thresh`,
+  `new_track_thresh`, `match_thresh`, `track_buffer`) live in its YAML: copy
+  `bytetrack.yaml` from Ultralytics and pass your copy to `--tracker`.
 - `--fps` trades CPU for responsiveness. At the default 5 fps, a person must be visible for
   about 2 s to count as a "sustained track" (10 detections) in the demo heuristic.

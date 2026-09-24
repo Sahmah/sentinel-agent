@@ -5,7 +5,13 @@ from sentinel_agent.detection.models import Detection
 from sentinel_agent.events.aggregator import cluster_into_events
 
 
-def _det(t: float, x: int = 100, label: str = "person", tp: bool | None = None) -> Detection:
+def _det(
+    t: float,
+    x: int = 100,
+    label: str = "person",
+    tp: bool | None = None,
+    track_id: int | None = None,
+) -> Detection:
     return Detection(
         camera_id="cam",
         frame_index=int(t * 5),
@@ -14,6 +20,7 @@ def _det(t: float, x: int = 100, label: str = "person", tp: bool | None = None) 
         bbox=(x, 100, 10, 10),
         raw_confidence=0.9,
         is_true_positive=tp,
+        track_id=track_id,
     )
 
 
@@ -27,6 +34,27 @@ def test_distant_objects_with_same_label_stay_separate():
     events = cluster_into_events(detections)
     assert len(events) == 2
     assert all(e.detection_count == 5 for e in events)
+
+
+def test_crossing_tracks_stay_separate():
+    # Two people walk through each other: at t=0.4 their centers coincide. Without
+    # track ids the greedy rule would swap or merge them; with ids they stay apart.
+    a = [_det(t / 5, x=20 + 40 * t, track_id=1) for t in range(5)]
+    b = [_det(t / 5, x=180 - 40 * t, track_id=2) for t in range(5)]
+    events = cluster_into_events(a + b)
+    assert len(events) == 2
+    assert all(e.detection_count == 5 for e in events)
+
+
+def test_a_track_can_jump_farther_than_the_distance_rule():
+    # A fast mover (or a low frame rate) moves more than max_distance_px per frame.
+    events = cluster_into_events([_det(t / 5, x=150 * t, track_id=7) for t in range(4)])
+    assert [e.detection_count for e in events] == [4]
+
+
+def test_a_track_is_still_split_by_the_time_gap():
+    events = cluster_into_events([_det(0.0, track_id=3), _det(5.0, track_id=3)])
+    assert [e.detection_count for e in events] == [1, 1]
 
 
 def test_labels_are_never_mixed():

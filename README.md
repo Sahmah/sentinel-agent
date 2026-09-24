@@ -12,7 +12,7 @@ combined, and when the two **disagree**, the event goes to a human instead of be
 ```mermaid
 flowchart LR
   S[Camera / video / synthetic scene] --> D[Detector<br/>YOLO26n or classical CV]
-  D --> A[Event aggregator<br/>greedy tracker]
+  D --> A[Event aggregator<br/>ByteTrack ids or greedy]
   A --> T{triage}
   T -- irrelevant --> X[dismissed<br/>no LLM call]
   T -- person or zone --> R[reason<br/>1 LLM call → p_llm]
@@ -217,7 +217,7 @@ less independent (the model still never sees the detector's score).
 | Stage | Module | What it does |
 | --- | --- | --- |
 | Detect | `detection/` | `Detector` protocol with two implementations: a classical OpenCV contour detector (for the synthetic scene) and YOLO26n (for real video) |
-| Aggregate | `events/` | Greedy tracker that groups detections into events by time gap and center distance. A streaming version closes each event once its object has been gone for `--gap` seconds |
+| Aggregate | `events/` | Groups detections into events. On live video YOLO runs with ByteTrack, and an event is one track id; synthetic scenes use a greedy rule (time gap + center distance). A streaming version closes each event once its object has been gone for `--gap` seconds |
 | Triage | `agent/graph.py` | Cheap filter: non-person objects outside the zone never cost an LLM call. On live video, neither do one-frame person flickers outside the zone |
 | Reason | `agent/` | One LLM call returns JSON with `severity`, `reasoning`, `confidence` and `confidence_basis`. If the reply can't be parsed twice, the event goes to `human_review` |
 | Decide | `calibration/fusion.py` | Weighted fusion of `p_cv` and `p_llm`. A gap above 0.35 counts as disagreement and goes to a human; low combined confidence is dismissed |
@@ -243,8 +243,11 @@ These are part of the point of the project, not fine print.
 - **The fusion is deliberately simple.** It treats the two signals as independent evidence.
   That is a smaller stretch with one detector and one agent than with a swarm, but it is still
   an assumption.
-- **The tracker is minimal.** Two people crossing each other can swap or merge events; a real
-  tracker (e.g. ByteTrack) would fix that.
+- **Only live video is tracked.** The webcam path uses ByteTrack, so two people crossing each
+  other keep separate events. ByteTrack matches on motion only, so after a long occlusion a
+  person can come back with a new id and a new event (`--tracker botsort.yaml` adds appearance
+  matching, at a CPU cost). The synthetic scenes still use the greedy time-gap + center-distance
+  rule, which can merge objects that cross.
 - **The demo "LLM" is rules.** It only sees what the real model would see, and exists so the
   pipeline is reproducible at zero cost.
 

@@ -29,6 +29,9 @@ dependencies = [
 # Real detector for webcam/video input. Ultralytics YOLO is AGPL-3.0 — see README.
 vision = [
     "ultralytics>=8.4",
+    # ByteTrack's assignment solver. Ultralytics pip-installs it at runtime when missing;
+    # declaring it keeps the environment reproducible.
+    "lap>=0.5.12",
     # Listed directly so [tool.uv.sources] can pin them to the CPU index — uv sources only
     # apply to direct dependencies, not to ones pulled in transitively by ultralytics.
     "torch>=2.4",
