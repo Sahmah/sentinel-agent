@@ -8,7 +8,7 @@ an LLM, which reads a flat record more reliably than a nested one.
 import base64
 import json
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import AwareDatetime, BaseModel, Field, field_serializer
 
@@ -20,6 +20,9 @@ def iso_utc(dt: datetime) -> str:
     """Fixed-width UTC timestamp, so string order is time order in SQLite and
     as a DynamoDB sort key (Pydantic's default drops zero microseconds)."""
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+Verdict = Literal["real", "false_alarm"]
 
 
 class EventRecord(BaseModel):
@@ -34,6 +37,9 @@ class EventRecord(BaseModel):
     entered_restricted_zone: bool
     p_cv: float = Field(description="Detector probability for the event")
     p_cv_calibrated: bool = Field(description="False when p_cv is the raw detector score")
+    p_cv_raw: float | None = Field(
+        default=None, description="The detector's raw mean score, what calibrators are fit on"
+    )
     # Nullable fields default to None: DynamoDB items omit them instead of storing NULL.
     llm_confidence: float | None = Field(
         default=None, description="Agent's confidence; null when the event was dismissed at triage"
@@ -54,10 +60,18 @@ class EventRecord(BaseModel):
         default=None,
         description="Crop image file name; the full frame is <id>_scene.jpg next to it",
     )
+    review: Verdict | None = Field(
+        default=None, description="A person's verdict on the event, if someone reviewed it"
+    )
+    reviewed_at: AwareDatetime | None = None
 
     @field_serializer("occurred_at")
     def _serialize_occurred_at(self, value: datetime) -> str:
         return iso_utc(value)
+
+    @field_serializer("reviewed_at")
+    def _serialize_reviewed_at(self, value: datetime | None) -> str | None:
+        return None if value is None else iso_utc(value)
 
 
 class EventFilter(BaseModel):
@@ -98,3 +112,15 @@ class Storage(Protocol):
     def query(self, filters: EventFilter, *, limit: int, cursor: str | None = None) -> EventPage:
         """Newest first. Raises `InvalidCursorError` for a cursor this backend
         didn't issue."""
+
+
+def apply_review(storage: Storage, event_id: str, verdict: Verdict) -> EventRecord | None:
+    """Record a person's verdict. Read-modify-write through the normal protocol, so
+    every backend supports it; reviews are rare and single-user, so there is no
+    write race worth a conditional update."""
+    record = storage.get(event_id)
+    if record is None:
+        return None
+    reviewed = record.model_copy(update={"review": verdict, "reviewed_at": datetime.now(UTC)})
+    storage.save(reviewed)
+    return reviewed

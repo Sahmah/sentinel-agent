@@ -93,3 +93,30 @@ def test_should_escalate(p_cv, p_llm, escalate, disagreement):
     result = should_escalate(p_cv, p_llm)
     assert result.should_escalate is escalate
     assert result.disagreement is disagreement
+
+
+def test_calibrator_from_reviews_needs_both_verdicts(tmp_path, make_record):
+    from sentinel_agent.pipeline import calibrator_from_reviews
+    from sentinel_agent.storage.sqlite_store import SqliteStorage
+
+    store = SqliteStorage(tmp_path / "events.db")
+    # Real events score higher than false alarms, as a working detector would.
+    for i in range(6):
+        store.save(
+            make_record(i, id=f"r{i}", camera_id="webcam", p_cv_raw=0.8 + i / 100, review="real")
+        )
+    calibrator, n = calibrator_from_reviews(store, "webcam")
+    assert calibrator is None and n == 6  # only one kind of verdict so far
+
+    for i in range(6):
+        store.save(
+            make_record(
+                10 + i, id=f"f{i}", camera_id="webcam", p_cv_raw=0.4 + i / 100, review="false_alarm"
+            )
+        )
+    store.save(make_record(30, id="unreviewed", camera_id="webcam", p_cv_raw=0.5))
+    store.save(make_record(31, id="other-cam", camera_id="cam-02", p_cv_raw=0.9, review="real"))
+    calibrator, n = calibrator_from_reviews(store, "webcam")
+    assert n == 12
+    low, high = calibrator.predict(np.array([0.42, 0.83]))
+    assert low < 0.5 < high

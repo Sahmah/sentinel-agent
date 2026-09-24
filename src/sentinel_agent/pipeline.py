@@ -17,7 +17,7 @@ from sentinel_agent.detection.classical import ClassicalCVDetector
 from sentinel_agent.detection.models import Detection
 from sentinel_agent.detection.scenario import generate_scenario, label_detections
 from sentinel_agent.events.models import Event
-from sentinel_agent.storage.base import EventRecord
+from sentinel_agent.storage.base import EventFilter, EventRecord, Storage
 
 
 @dataclass(frozen=True)
@@ -120,6 +120,7 @@ def to_record(
         entered_restricted_zone=e.entered_restricted_zone,
         p_cv=d.p_cv,
         p_cv_calibrated=d.calibrated,
+        p_cv_raw=e.mean_raw_confidence,
         llm_confidence=s.get("llm_confidence"),
         combined_confidence=s.get("combined_confidence"),
         disagreement=s.get("disagreement", False),
@@ -131,3 +132,29 @@ def to_record(
         is_true_positive=e.is_true_positive,
         snapshot=snapshot,
     )
+
+
+def calibrator_from_reviews(
+    storage: Storage, camera_id: str, *, min_per_class: int = 5, max_records: int = 5000
+) -> tuple[PlattCalibrator | None, int]:
+    """Fit Platt scaling on this camera's human-reviewed events: the live
+    equivalent of the synthetic ground truth. Returns (None, n) until there are
+    at least `min_per_class` verdicts of each kind, because a calibrator fit on
+    a handful of one-sided labels is worse than none."""
+    scores: list[float] = []
+    labels: list[int] = []
+    seen, cursor = 0, None
+    while seen < max_records:
+        page = storage.query(EventFilter(camera_id=camera_id), limit=100, cursor=cursor)
+        seen += len(page.events)
+        for r in page.events:
+            if r.review is not None and r.p_cv_raw is not None:
+                scores.append(r.p_cv_raw)
+                labels.append(int(r.review == "real"))
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    n_real = sum(labels)
+    if min(n_real, len(labels) - n_real) < min_per_class:
+        return None, len(labels)
+    return PlattCalibrator().fit(np.array(scores), np.array(labels)), len(labels)

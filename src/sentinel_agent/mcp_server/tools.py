@@ -34,6 +34,9 @@ class EventSummary(BaseModel):
     first_occurred_at: str | None
     last_occurred_at: str | None
     alert_ids: list[str] = Field(description="Up to 20 most recent alert ids, for get_event")
+    reviewed: int = Field(default=0, description="Events a person has given a verdict on")
+    reviewed_real: int = 0
+    reviewed_false_alarm: int = 0
     truncated: bool = Field(
         description=f"True if more than {MAX_SUMMARY_EVENTS} events matched; counts cover "
         "only the newest ones"
@@ -108,5 +111,8 @@ def summarize_events(
         first_occurred_at=iso_utc(times[0]) if times else None,
         last_occurred_at=iso_utc(times[-1]) if times else None,
         alert_ids=[r.id for r in records if r.action == "alert"][:20],
+        reviewed=sum(r.review is not None for r in records),
+        reviewed_real=sum(r.review == "real" for r in records),
+        reviewed_false_alarm=sum(r.review == "false_alarm" for r in records),
         truncated=truncated,
     )

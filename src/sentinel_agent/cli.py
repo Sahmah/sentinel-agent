@@ -4,6 +4,7 @@
     sentinel webcam     live camera or a video file, with YOLO (needs the `vision` extra)
     sentinel serve-mcp  MCP server (stdio) over the recorded events
     sentinel eval-llm   grade the reasoning LLM against synthetic ground truth
+    sentinel serve      HTTP API + dashboard at http://127.0.0.1:8000
 
 The LLM backend comes from SENTINEL_LLM_BACKEND (`demo` by default; see agent/llm.py).
 Decided events are stored per SENTINEL_STORAGE_BACKEND (SQLite by default; see storage/).
@@ -25,6 +26,7 @@ from sentinel_agent.events.aggregator import cluster_into_events
 from sentinel_agent.events.models import Event
 from sentinel_agent.pipeline import (
     Decision,
+    calibrator_from_reviews,
     decide,
     evaluate_calibration,
     fit_calibrator,
@@ -118,10 +120,18 @@ class EventWorker:
     (seconds per event on Bedrock) doesn't freeze capture and the preview window.
     Events are handled one at a time, in the order they closed."""
 
-    def __init__(self, graph, *, save: Callable[[Decision], None] | None = None, out=None):
+    def __init__(
+        self,
+        graph,
+        *,
+        calibrator=None,
+        save: Callable[[Decision], None] | None = None,
+        out=None,
+    ):
         self.last_line = ""
         self.saved = 0
         self._graph = graph
+        self._calibrator = calibrator
         self._save = save
         self._out = out
         self._queue: queue.Queue[Event | None] = queue.Queue()
@@ -141,7 +151,7 @@ class EventWorker:
         out = self._out or sys.stdout
         while (event := self._queue.get()) is not None:
             try:
-                d = decide(self._graph, event)
+                d = decide(self._graph, event, self._calibrator)
             except Exception as exc:  # keep the stream alive if one LLM call fails
                 print(f"agent failed on {event.label} at {event.start_ts:.1f}s: {exc}", file=out)
                 continue
@@ -218,10 +228,12 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     aggregator = StreamingAggregator(gap_seconds=args.gap)
     policy = DecisionPolicy(min_person_detections_outside_zone=args.min_detections)
     save = None
+    calibrator = None
     frame_buffer = FrameBuffer()
     snapshots: dict[str, str] = {}  # event id -> crop file, written before the event is queued
     if not args.no_store:
         storage, run_id = build_storage(), uuid.uuid4().hex[:12]
+        calibrator, n_reviewed = calibrator_from_reviews(storage, args.camera_id)
 
         def save(d: Decision) -> None:
             # run_started_at is set when the clock starts, before any event can close.
@@ -235,7 +247,7 @@ def cmd_webcam(args: argparse.Namespace) -> int:
                 )
             )
 
-    worker = EventWorker(build_graph(build_llm(), policy=policy), save=save)
+    worker = EventWorker(build_graph(build_llm(), policy=policy), calibrator=calibrator, save=save)
 
     def close_events(events: list[Event]) -> None:
         # Snapshots are cut here, in the capture thread that owns the frame buffer,
@@ -250,8 +262,12 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
     step = 1 if is_camera else max(1, round(source_fps / args.fps))
 
-    print("p_cv is YOLO's raw confidence (marked *): live input has no ground truth to")
-    print("calibrate against. Press q in the video window to stop.\n")
+    if calibrator is not None:
+        print(f"p_cv is calibrated on {n_reviewed} events you reviewed for this camera.")
+    else:
+        print("p_cv is YOLO's raw confidence (marked *): review events in the dashboard")
+        print("(at least 5 real and 5 false alarms) and it gets calibrated on your verdicts.")
+    print("Press q in the video window to stop.\n")
     print(HEADER)
 
     started = time.monotonic()
@@ -369,6 +385,21 @@ def _backend_name() -> str:
     return backend
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    import uvicorn
+
+    from sentinel_agent.api import build_app
+
+    frontend = Path(args.frontend)
+    if not frontend.is_dir():
+        print(f"No dashboard build at {frontend}/ (see frontend/README.md); serving the API only.")
+    print(f"Sentinel API on http://{args.host}:{args.port} (events from {describe_storage()})")
+    uvicorn.run(build_app(frontend=frontend), host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
 def cmd_serve_mcp(args: argparse.Namespace) -> int:
     from sentinel_agent.mcp_server.server import build_server
 
@@ -414,6 +445,12 @@ def main(argv: list[str] | None = None) -> int:
 
     serve = sub.add_parser("serve-mcp", help="MCP server (stdio) to query the recorded events")
     serve.set_defaults(func=cmd_serve_mcp)
+
+    srv = sub.add_parser("serve", help="HTTP API and dashboard over the recorded events")
+    srv.add_argument("--host", default="127.0.0.1", help="no auth: keep it on localhost")
+    srv.add_argument("--port", type=int, default=8000)
+    srv.add_argument("--frontend", default="frontend/build", help="built dashboard to serve")
+    srv.set_defaults(func=cmd_serve)
 
     ev = sub.add_parser("eval-llm", help="grade the reasoning LLM on synthetic ground truth")
     ev.add_argument("--seeds", default="1-3", help='scenes to evaluate, e.g. "1-5" or "1,4"')
