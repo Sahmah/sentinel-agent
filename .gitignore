@@ -17,6 +17,7 @@ build/
 
 # Run output
 sentinel.db
+snapshots/
 *.mp4
 
 # Local Claude Code settings

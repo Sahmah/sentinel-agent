@@ -7,6 +7,9 @@ Backend is picked by `SENTINEL_LLM_BACKEND`:
   from `SENTINEL_BEDROCK_MODEL_ID` (some regions require an inference-profile
   id such as `us.anthropic...` instead of the base model id), region from
   `AWS_REGION`.
+- `ollama`: a local model served by Ollama (needs the `ollama` extra). Model
+  from `SENTINEL_OLLAMA_MODEL`, server from `SENTINEL_OLLAMA_URL`. Free and
+  offline; small models reason noticeably worse, see `sentinel eval-llm`.
 
 Structured output is parsed by hand from plain JSON text rather than through
 `with_structured_output()`: that path sends a forced `tool_choice`, which newer
@@ -33,6 +36,8 @@ from sentinel_agent.agent.prompts import EVENT_CLOSE, EVENT_OPEN
 from sentinel_agent.agent.schemas import ReasoningOutput
 
 DEFAULT_BEDROCK_MODEL_ID = "anthropic.claude-opus-5"
+DEFAULT_OLLAMA_MODEL = "gemma3:4b"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 RETRYABLE_AWS_ERRORS = ("ThrottlingException", "ServiceUnavailableException")
 
 
@@ -81,7 +86,28 @@ def build_llm(backend: str | None = None) -> BaseChatModel:
             # botocore's own retries, as a first layer under invoke_with_backoff.
             config=Config(retries={"max_attempts": 5, "mode": "adaptive"}),
         )
-    raise ValueError(f"Unknown SENTINEL_LLM_BACKEND {backend!r}; expected 'demo' or 'bedrock'")
+    if backend == "ollama":
+        try:
+            from langchain_ollama import ChatOllama
+        except ImportError as exc:
+            raise ImportError(
+                "The ollama backend needs the optional `ollama` extra: uv sync --extra ollama"
+            ) from exc
+
+        return ChatOllama(
+            model=os.environ.get("SENTINEL_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
+            base_url=os.environ.get("SENTINEL_OLLAMA_URL", DEFAULT_OLLAMA_URL),
+            # JSON mode constrains decoding to valid JSON: small models otherwise
+            # wander into prose. temperature 0 keeps runs comparable in eval-llm.
+            format="json",
+            temperature=0,
+            num_predict=400,
+            # Loading a model takes ~45 s on a consumer GPU; keep it warm between events.
+            keep_alive="30m",
+        )
+    raise ValueError(
+        f"Unknown SENTINEL_LLM_BACKEND {backend!r}; expected 'demo', 'bedrock' or 'ollama'"
+    )
 
 
 def invoke_with_backoff(

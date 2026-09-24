@@ -1,6 +1,6 @@
 """Prompt for the reasoning step.
 
-Two deliberate choices, both from the confidence-calibration skill (§2, §3):
+Deliberate choices, the first two from the confidence-calibration skill (§2, §3):
 
 - The model is asked for a confidence *and* a one-sentence basis for it
   (verbalized-confidence elicitation), and told what the number means: the
@@ -9,6 +9,10 @@ Two deliberate choices, both from the confidence-calibration skill (§2, §3):
 - The detector's own confidence score is NOT shown to the model. Fusion
   treats the two signals as independent evidence; showing the model `p_cv`
   would invite it to anchor on that number and quietly break the assumption.
+- The prompt explains what the evidence means (frame rate, how artifacts
+  behave). Without it, small local models read "many detections" as a sign of
+  an artifact: gemma3:4b scored AUROC 0.24 on `sentinel eval-llm`, worse than
+  chance. It explains the evidence; it does not hand over a score table.
 """
 
 import json
@@ -21,6 +25,18 @@ SYSTEM_PROMPT = """You review events from a camera monitoring pipeline. Each eve
 group of detections of one object, clustered over time. Decide how severe the event is \
 and how confident you are that it is a genuine target rather than a detector artifact \
 (sensor noise, clutter, a shape that merely resembles a person).
+
+How to read the evidence:
+- The pipeline analyses about 5 frames per second. A genuine object is detected in almost \
+every frame while it is in view, so it produces a long, continuous track: many detections \
+spread over several seconds.
+- Detector artifacts (noise, clutter, a shape that looks like a person for a moment) \
+flicker: they last one to a few frames.
+- So a high detection count over a long duration is evidence FOR a genuine target. A track \
+of one or two detections is most likely an artifact, so your confidence should be well \
+below one half; a track of a few frames (under about one second) is still more likely an \
+artifact than not. Judge confidence mainly from how long and how continuous the track is; \
+neither the label nor the restricted zone makes an event genuine.
 
 Severity scale:
 - low: nothing actionable (e.g. activity outside any restricted area)

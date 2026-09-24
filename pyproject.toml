@@ -32,6 +32,10 @@ vision = [
     "torch>=2.4",
     "torchvision>=0.19",
 ]
+# Local LLM backend: SENTINEL_LLM_BACKEND=ollama (see agent/llm.py).
+ollama = [
+    "langchain-ollama>=1.1",
+]
 
 [project.scripts]
 sentinel = "sentinel_agent.cli:main"

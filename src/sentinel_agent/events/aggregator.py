@@ -72,6 +72,7 @@ def build_event(cluster: list[Detection]) -> Event:
     camera_id, label = cluster[0].camera_id, cluster[0].label
     confidences = [d.raw_confidence for d in cluster]
     labeled = [d.is_true_positive for d in cluster if d.is_true_positive is not None]
+    best = max(cluster, key=lambda d: d.raw_confidence)
     return Event(
         id=str(uuid.uuid4()),
         camera_id=camera_id,
@@ -83,4 +84,6 @@ def build_event(cluster: list[Detection]) -> Event:
         mean_raw_confidence=sum(confidences) / len(confidences),
         entered_restricted_zone=any(d.in_restricted_zone for d in cluster),
         is_true_positive=(sum(labeled) * 2 > len(labeled)) if labeled else None,
+        best_frame_index=best.frame_index,
+        best_bbox=best.bbox,
     )

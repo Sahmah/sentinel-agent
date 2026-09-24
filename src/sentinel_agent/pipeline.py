@@ -37,15 +37,24 @@ class CalibrationReport:
     calibrated_brier: float
 
 
-def synthetic_detections(seed: int, detector: Detector | None = None) -> list[Detection]:
+def synthetic_scene(
+    seed: int, detector: Detector | None = None
+) -> tuple[dict[int, np.ndarray], list[Detection]]:
+    """The rendered frames (by index, for snapshots) and their labeled detections."""
     detector = detector or ClassicalCVDetector()
+    frames: dict[int, np.ndarray] = {}
     detections: list[Detection] = []
     for f in generate_scenario(seed=seed):
+        frames[f.frame_index] = f.frame
         found = detector.detect(
             f.frame, camera_id=f.camera_id, frame_index=f.frame_index, timestamp=f.timestamp
         )
         detections += label_detections(f, found)
-    return detections
+    return frames, detections
+
+
+def synthetic_detections(seed: int, detector: Detector | None = None) -> list[Detection]:
+    return synthetic_scene(seed, detector)[1]
 
 
 def _scores_and_labels(detections: list[Detection]) -> tuple[np.ndarray, np.ndarray]:
@@ -89,7 +98,14 @@ def decide(graph, event: Event, calibrator: PlattCalibrator | None = None) -> De
     return Decision(event=event, p_cv=p_cv, calibrated=calibrator is not None, state=state)
 
 
-def to_record(d: Decision, *, run_id: str, source: str, run_started_at: datetime) -> EventRecord:
+def to_record(
+    d: Decision,
+    *,
+    run_id: str,
+    source: str,
+    run_started_at: datetime,
+    snapshot: str | None = None,
+) -> EventRecord:
     """Event timestamps are seconds into the run; anchor them to wall-clock time."""
     e, s = d.event, d.state
     return EventRecord(
@@ -113,4 +129,5 @@ def to_record(d: Decision, *, run_id: str, source: str, run_started_at: datetime
         confidence_basis=s.get("confidence_basis"),
         triage_reason=s.get("triage_reason"),
         is_true_positive=e.is_true_positive,
+        snapshot=snapshot,
     )

@@ -50,6 +50,10 @@ class EventRecord(BaseModel):
     is_true_positive: bool | None = Field(
         default=None, description="Ground truth, known only for synthetic demo scenes"
     )
+    snapshot: str | None = Field(
+        default=None,
+        description="Crop image file name; the full frame is <id>_scene.jpg next to it",
+    )
 
     @field_serializer("occurred_at")
     def _serialize_occurred_at(self, value: datetime) -> str:

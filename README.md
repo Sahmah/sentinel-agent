@@ -119,6 +119,35 @@ The demo backend and Bedrock receive the same prompt and go through the same par
 and fusion code. The LLM is injected into `build_graph(llm)`, so tests use a fake model and
 never touch the network.
 
+## A free local LLM (Ollama), and how to grade any LLM
+
+```bash
+uv sync --extra ollama
+export SENTINEL_LLM_BACKEND=ollama          # SENTINEL_OLLAMA_MODEL=gemma3:4b by default
+uv run sentinel eval-llm --seeds 1-5        # grade it on synthetic ground truth
+```
+
+`sentinel eval-llm` runs the agent on every event of a few synthetic scenes, which know which
+events are real, and reports whether `p_llm` separates real events from detector artifacts
+(AUROC), whether it is calibrated (ECE, Brier) and what the pipeline then decided. It is how
+prompt changes are judged here: with numbers, on 38 events (7 real).
+
+| Backend and prompt | AUROC | ECE | Brier | Real alerted | False alerts | To a human |
+| --- | --- | --- | --- | --- | --- | --- |
+| Demo rules (baseline) | 1.000 | 0.327 | 0.138 | 7/7 | 0 | 22 |
+| gemma3:4b, prompt v1 | **0.240** | 0.551 | 0.493 | **0/7** | 0 | 0 |
+| gemma3:4b, prompt v2 | 1.000 | 0.441 | 0.262 | 7/7 | 0 | 7 |
+| gemma3:4b, prompt v3 (current) | 1.000 | 0.362 | 0.193 | 7/7 | 0 | 14 |
+
+With the first prompt, the 4B model read "90 detections" as a sign of an artifact and scored
+worse than chance. Explaining what the evidence means (about 5 frames per second, artifacts
+flicker for one to a few frames) fixed the ranking; saying that one- or two-frame tracks are
+probably artifacts improved calibration. The rise in human reviews is the design working: once
+the model is unsure about flickers, it disagrees with a detector that is sure, and
+disagreement goes to a person. gemma3:4b took about 8 s per event on an 8 GB AMD RX 580
+(Vulkan). Note what this does and does not show: from metadata alone, an LLM can at best
+match the rules. Its real advantage should come from seeing the snapshot (roadmap).
+
 ## How it works
 
 | Stage | Module | What it does |
@@ -128,6 +157,7 @@ never touch the network.
 | Triage | `agent/graph.py` | Cheap filter: non-person objects outside the zone never cost an LLM call. On live video, neither do one-frame person flickers outside the zone |
 | Reason | `agent/` | One LLM call returns JSON with `severity`, `reasoning`, `confidence` and `confidence_basis`. If the reply can't be parsed twice, the event goes to `human_review` |
 | Decide | `calibration/fusion.py` | Weighted fusion of `p_cv` and `p_llm`. A gap above 0.35 counts as disagreement and goes to a human; low combined confidence is dismissed |
+| Snapshot | `snapshots.py` | When an event closes, a crop around its most confident detection (`<id>.jpg`) and the full frame with the box (`<id>_scene.jpg`) are saved to `snapshots/` |
 | Store | `storage/` | One flat record per decided event. SQLite (keyset pagination) or DynamoDB (time-ordered GSI), behind the same `Storage` protocol |
 | Serve | `mcp_server/` | Tool logic as plain functions over `Storage`; `MCPServer` only adds schemas. Expected failures raise `ToolError`, anything else is masked |
 | Calibrate | `calibration/` | Platt scaling, isotonic regression, temperature scaling, self-consistency, ECE and Brier score |
@@ -156,7 +186,7 @@ These are part of the point of the project, not fine print.
 ## Development
 
 ```bash
-uv run pytest                                  # 91 tests, no network, no AWS
+uv run pytest                                  # 102 tests, no network, no AWS
 uv run ruff check . && uv run ruff format --check .
 ```
 
@@ -172,6 +202,10 @@ the real model runs only when the `vision` extra and the weights are installed.
 - [x] Live webcam / video mode with YOLO26n
 - [x] Event storage: SQLite by default, DynamoDB optional
 - [x] MCP server (`sentinel serve-mcp`) to query past events and alerts from Claude
+- [x] Local LLM backend (Ollama) and `sentinel eval-llm`
+- [x] Event snapshots (crop + scene)
+- [ ] Vision LLM: send the snapshot to the reasoning model
+- [ ] HTTP API, live dashboard (Svelte) and notifications
 - [ ] Terraform for the AWS path (least-privilege IAM, Bedrock, DynamoDB, S3)
 - [ ] GitHub Actions CI
 

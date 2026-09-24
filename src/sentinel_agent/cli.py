@@ -3,6 +3,7 @@
     sentinel demo       synthetic scene, end to end, zero AWS
     sentinel webcam     live camera or a video file, with YOLO (needs the `vision` extra)
     sentinel serve-mcp  MCP server (stdio) over the recorded events
+    sentinel eval-llm   grade the reasoning LLM against synthetic ground truth
 
 The LLM backend comes from SENTINEL_LLM_BACKEND (`demo` by default; see agent/llm.py).
 Decided events are stored per SENTINEL_STORAGE_BACKEND (SQLite by default; see storage/).
@@ -28,8 +29,10 @@ from sentinel_agent.pipeline import (
     evaluate_calibration,
     fit_calibrator,
     synthetic_detections,
+    synthetic_scene,
     to_record,
 )
+from sentinel_agent.snapshots import FrameBuffer, save_snapshots, snapshot_dir
 from sentinel_agent.storage import build_storage, describe_storage
 
 
@@ -58,14 +61,20 @@ def cmd_demo(args: argparse.Namespace) -> int:
     calibrator = fit_calibrator([d for s in seeds for d in synthetic_detections(s)])
 
     print(f"Running the pipeline on synthetic seed {args.seed}...\n")
-    detections = synthetic_detections(args.seed)
+    frames, detections = synthetic_scene(args.seed)
     events = cluster_into_events(detections)
     graph = build_graph(build_llm())
     decisions = [decide(graph, e, calibrator) for e in events]
     if not args.no_store:
         storage, run_id, started = build_storage(), uuid.uuid4().hex[:12], datetime.now(UTC)
         for d in decisions:
-            storage.save(to_record(d, run_id=run_id, source="demo", run_started_at=started))
+            frame = frames.get(d.event.best_frame_index)
+            snapshot = save_snapshots(frame, d.event) if frame is not None else None
+            storage.save(
+                to_record(
+                    d, run_id=run_id, source="demo", run_started_at=started, snapshot=snapshot
+                )
+            )
 
     print(HEADER)
     for d in decisions:
@@ -90,7 +99,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
         f"Brier {report.raw_brier:.3f} -> {report.calibrated_brier:.3f}"
     )
     if not args.no_store:
-        print(f"Saved {len(decisions)} events to {describe_storage()} (run {run_id}).")
+        print(
+            f"Saved {len(decisions)} events to {describe_storage()} (run {run_id}), "
+            f"snapshots in {snapshot_dir()}/."
+        )
     return 0
 
 
@@ -206,16 +218,35 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     aggregator = StreamingAggregator(gap_seconds=args.gap)
     policy = DecisionPolicy(min_person_detections_outside_zone=args.min_detections)
     save = None
+    frame_buffer = FrameBuffer()
+    snapshots: dict[str, str] = {}  # event id -> crop file, written before the event is queued
     if not args.no_store:
         storage, run_id = build_storage(), uuid.uuid4().hex[:12]
 
         def save(d: Decision) -> None:
             # run_started_at is set when the clock starts, before any event can close.
             storage.save(
-                to_record(d, run_id=run_id, source="webcam", run_started_at=run_started_at)
+                to_record(
+                    d,
+                    run_id=run_id,
+                    source="webcam",
+                    run_started_at=run_started_at,
+                    snapshot=snapshots.pop(d.event.id, None),
+                )
             )
 
     worker = EventWorker(build_graph(build_llm(), policy=policy), save=save)
+
+    def close_events(events: list[Event]) -> None:
+        # Snapshots are cut here, in the capture thread that owns the frame buffer,
+        # before the event is queued for the (slower) agent thread.
+        if not args.no_store:
+            for event in events:
+                frame = frame_buffer.get(event.best_frame_index)
+                if frame is not None:
+                    snapshots[event.id] = save_snapshots(frame, event)
+        worker.submit(events)
+
     source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
     step = 1 if is_camera else max(1, round(source_fps / args.fps))
 
@@ -247,7 +278,9 @@ def cmd_webcam(args: argparse.Namespace) -> int:
                     frame, camera_id=args.camera_id, frame_index=frame_index, timestamp=now
                 )
                 aggregator.add(detections)
-                worker.submit(aggregator.pop_closed(now))
+                if not args.no_store:
+                    frame_buffer.add(frame_index, now, frame)
+                close_events(aggregator.pop_closed(now))
 
             if not args.no_window:
                 # Every frame is shown; between analysed frames the last boxes are redrawn.
@@ -264,7 +297,7 @@ def cmd_webcam(args: argparse.Namespace) -> int:
             cv2.destroyAllWindows()
 
     elapsed = time.monotonic() - started
-    worker.submit(aggregator.flush())
+    close_events(aggregator.flush())
     worker.close()
     print(
         f"\n{analysed} frames analysed in {elapsed:.1f} s ({analysed / max(elapsed, 1e-9):.1f} fps)"
@@ -272,6 +305,68 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     if not args.no_store:
         print(f"Saved {worker.saved} events to {describe_storage()} (run {run_id}).")
     return 0
+
+
+def _parse_seeds(text: str) -> list[int]:
+    """ "1-5" or "1,3,7" (or a mix: "1-3,9")."""
+    seeds: list[int] = []
+    for part in text.split(","):
+        first, _, last = part.partition("-")
+        seeds += range(int(first), int(last or first) + 1)
+    return seeds
+
+
+def cmd_eval_llm(args: argparse.Namespace) -> int:
+    import json
+
+    from sentinel_agent.evaluation import evaluate_llm
+
+    # Calibration scenes are kept apart from the evaluated ones (seeds 1000+).
+    calibration_seeds = list(range(1000, 1000 + args.calibration_scenes))
+    calibrator = fit_calibrator([d for s in calibration_seeds for d in synthetic_detections(s)])
+    graph = build_graph(build_llm())
+    print(f"Evaluating on synthetic seeds {args.seeds} (backend: {_backend_name()})\n")
+    print(f"{'seed':>4} {'label':<7} {'dets':>4} {'zone':<4} {'truth':<5} {'p_llm':>5}  action")
+
+    def progress(r) -> None:
+        p = " fail" if r.p_llm is None else f"{r.p_llm:5.2f}"
+        truth = "real" if r.is_real else "false"
+        zone = "yes" if r.in_zone else "no"
+        print(
+            f"{r.seed:>4} {r.label:<7} {r.detection_count:>4} {zone:<4} {truth:<5} {p}  "
+            f"{r.action}  ({r.seconds:.1f}s)",
+            flush=True,
+        )
+
+    report = evaluate_llm(graph, _parse_seeds(args.seeds), calibrator, progress=progress)
+    m = report.metrics()
+
+    def fmt(value) -> str:
+        return "-" if value is None else f"{value:.3f}" if isinstance(value, float) else str(value)
+
+    print(
+        f"\n{m['events']} events ({m['real']} real), {m['parse_failures']} unparseable replies\n"
+        f"p_llm separates real from false: AUROC {fmt(m['auroc'])} "
+        f"(mean {fmt(m['mean_p_llm_real'])} real vs {fmt(m['mean_p_llm_false'])} false)\n"
+        f"p_llm calibration: ECE {fmt(m['ece'])}, Brier {fmt(m['brier'])}\n"
+        f"Decisions: {m['real_alerted']}/{m['real']} real events alerted, "
+        f"{m['false_alerted']} false alerts, {m['human_review']} sent to human review\n"
+        f"Median time per event: {fmt(m['median_seconds'])} s"
+    )
+    if args.json:
+        with open(args.json, "w") as f:
+            json.dump({"backend": _backend_name(), "seeds": args.seeds, "metrics": m}, f, indent=2)
+        print(f"Metrics written to {args.json}")
+    return 0
+
+
+def _backend_name() -> str:
+    import os
+
+    backend = os.environ.get("SENTINEL_LLM_BACKEND", "demo")
+    if backend == "ollama":
+        return f"ollama/{os.environ.get('SENTINEL_OLLAMA_MODEL', 'gemma3:4b')}"
+    return backend
 
 
 def cmd_serve_mcp(args: argparse.Namespace) -> int:
@@ -319,6 +414,12 @@ def main(argv: list[str] | None = None) -> int:
 
     serve = sub.add_parser("serve-mcp", help="MCP server (stdio) to query the recorded events")
     serve.set_defaults(func=cmd_serve_mcp)
+
+    ev = sub.add_parser("eval-llm", help="grade the reasoning LLM on synthetic ground truth")
+    ev.add_argument("--seeds", default="1-3", help='scenes to evaluate, e.g. "1-5" or "1,4"')
+    ev.add_argument("--calibration-scenes", type=int, default=5)
+    ev.add_argument("--json", help="also write the metrics to this file")
+    ev.set_defaults(func=cmd_eval_llm)
 
     args = parser.parse_args(argv)
     return args.func(args)

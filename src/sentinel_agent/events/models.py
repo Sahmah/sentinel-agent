@@ -23,6 +23,12 @@ class Event(BaseModel):
         default=None,
         description="Majority ground truth of the member detections, synthetic runs only.",
     )
+    best_frame_index: int | None = Field(
+        default=None, description="Frame of the highest-confidence detection (for snapshots)"
+    )
+    best_bbox: tuple[int, int, int, int] | None = Field(
+        default=None, description="That detection's box, x, y, w, h in pixels"
+    )
 
 
 class IncidentSummary(BaseModel):
