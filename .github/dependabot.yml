@@ -24,6 +24,11 @@ updates:
     groups:
       frontend:
         update-types: [minor, patch]
+    ignore:
+      # svelte-check declares a peer range that stops at TypeScript 6 (npm ci fails
+      # with ERESOLVE on 7). Drop this once svelte-check supports TypeScript 7.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: terraform
     directory: /infra
