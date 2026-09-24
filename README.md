@@ -16,6 +16,8 @@ flowchart LR
   T -- person or zone --> R[reason<br/>1 LLM call → p_llm]
   R --> F[decide<br/>fuse p_cv + p_llm]
   F --> O[alert · logged ·<br/>human_review · dismissed]
+  O --> DB[(SQLite or<br/>DynamoDB)]
+  DB --> M[MCP server<br/>ask Claude about it]
 ```
 
 Runs end to end **with no AWS account and no cost**. The default LLM backend is a transparent
@@ -78,6 +80,33 @@ by default. The agent runs in a background thread, so a slow LLM call never free
 [docs/webcam.md](docs/webcam.md) covers every option, running from Windows when the repo lives
 in WSL, and the limitations.
 
+## Ask Claude about what happened (MCP)
+
+Every run saves its decided events: to `sentinel.db` by default, or to DynamoDB with
+`SENTINEL_STORAGE_BACKEND=dynamodb`. `sentinel serve-mcp` exposes them over MCP (stdio)
+through three read-only tools:
+
+| Tool | What it answers |
+| --- | --- |
+| `summarize_events` | "How did today go?": counts by decision and label, disagreements, recent alert ids |
+| `list_events` | "What happened on the webcam since 10:00?": newest first, filters, cursor pagination |
+| `get_event` | "Why was this one sent to a human?": the full record, with the agent's reasoning |
+
+The repo ships a `.mcp.json`, so after `uv run sentinel demo`, opening Claude Code in the repo
+is enough. Approve the `sentinel` server and ask:
+
+```text
+> Summarize the last Sentinel run. Which events went to human review, and why?
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SENTINEL_STORAGE_BACKEND` | `sqlite` | `sqlite` or `dynamodb` |
+| `SENTINEL_DB_PATH` | `sentinel.db` | SQLite file |
+| `SENTINEL_DYNAMODB_TABLE` | `sentinel-events` | Table with an `id` key and a `by_time` GSI (`kind`, `occurred_at`); see `storage/dynamodb_store.py` |
+
+Pass `--no-store` to `demo` or `webcam` to skip saving.
+
 ## Using Claude on Bedrock
 
 ```bash
@@ -99,6 +128,8 @@ never touch the network.
 | Triage | `agent/graph.py` | Cheap filter: non-person objects outside the zone never cost an LLM call. On live video, neither do one-frame person flickers outside the zone |
 | Reason | `agent/` | One LLM call returns JSON with `severity`, `reasoning`, `confidence` and `confidence_basis`. If the reply can't be parsed twice, the event goes to `human_review` |
 | Decide | `calibration/fusion.py` | Weighted fusion of `p_cv` and `p_llm`. A gap above 0.35 counts as disagreement and goes to a human; low combined confidence is dismissed |
+| Store | `storage/` | One flat record per decided event. SQLite (keyset pagination) or DynamoDB (time-ordered GSI), behind the same `Storage` protocol |
+| Serve | `mcp_server/` | Tool logic as plain functions over `Storage`; `MCPServer` only adds schemas. Expected failures raise `ToolError`, anything else is masked |
 | Calibrate | `calibration/` | Platt scaling, isotonic regression, temperature scaling, self-consistency, ECE and Brier score |
 
 ## Honest limitations
@@ -125,12 +156,13 @@ These are part of the point of the project, not fine print.
 ## Development
 
 ```bash
-uv run pytest                                  # 66 tests, no network, no AWS
+uv run pytest                                  # 91 tests, no network, no AWS
 uv run ruff check . && uv run ruff format --check .
 ```
 
-Tests use `hypothesis` for aggregator and calibration invariants, and `GenericFakeChatModel`
-for the graph nodes. The YOLO tests use a fake model, so they don't need torch; one test with
+Tests use `hypothesis` for aggregator and calibration invariants, `GenericFakeChatModel`
+for the graph nodes, moto for DynamoDB (the same storage tests run against both backends), and
+an in-memory MCP client for the server. The YOLO tests use a fake model, so they don't need torch; one test with
 the real model runs only when the `vision` extra and the weights are installed.
 
 ## Roadmap
@@ -138,8 +170,8 @@ the real model runs only when the `vision` extra and the weights are installed.
 - [x] Synthetic scene, classical detector, event aggregation, calibration library
 - [x] LangGraph agent (demo and Bedrock backends) with confidence fusion
 - [x] Live webcam / video mode with YOLO26n
-- [ ] Event storage: SQLite by default, DynamoDB optional
-- [ ] MCP server (`sentinel serve-mcp`) to query past events and alerts from Claude
+- [x] Event storage: SQLite by default, DynamoDB optional
+- [x] MCP server (`sentinel serve-mcp`) to query past events and alerts from Claude
 - [ ] Terraform for the AWS path (least-privilege IAM, Bedrock, DynamoDB, S3)
 - [ ] GitHub Actions CI
 

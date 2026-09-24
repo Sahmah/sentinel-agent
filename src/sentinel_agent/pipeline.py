@@ -1,10 +1,12 @@
 """Glue between the stages: detections -> calibrated events -> agent decisions.
 
 Shared by `sentinel demo` (synthetic scene) and `sentinel webcam` (live), so
-both run exactly the same aggregation, fusion and graph code.
+both run exactly the same aggregation, fusion and graph code, and store the
+same records.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import numpy as np
 
@@ -15,6 +17,7 @@ from sentinel_agent.detection.classical import ClassicalCVDetector
 from sentinel_agent.detection.models import Detection
 from sentinel_agent.detection.scenario import generate_scenario, label_detections
 from sentinel_agent.events.models import Event
+from sentinel_agent.storage.base import EventRecord
 
 
 @dataclass(frozen=True)
@@ -84,3 +87,30 @@ def decide(graph, event: Event, calibrator: PlattCalibrator | None = None) -> De
     event = event.model_copy(update={"calibrated_confidence": p_cv if calibrator else None})
     state = graph.invoke({"event": event.model_dump(), "p_cv": p_cv})
     return Decision(event=event, p_cv=p_cv, calibrated=calibrator is not None, state=state)
+
+
+def to_record(d: Decision, *, run_id: str, source: str, run_started_at: datetime) -> EventRecord:
+    """Event timestamps are seconds into the run; anchor them to wall-clock time."""
+    e, s = d.event, d.state
+    return EventRecord(
+        id=e.id,
+        run_id=run_id,
+        source=source,
+        camera_id=e.camera_id,
+        label=e.label,
+        occurred_at=run_started_at + timedelta(seconds=e.start_ts),
+        duration_seconds=round(e.end_ts - e.start_ts, 3),
+        detection_count=e.detection_count,
+        entered_restricted_zone=e.entered_restricted_zone,
+        p_cv=d.p_cv,
+        p_cv_calibrated=d.calibrated,
+        llm_confidence=s.get("llm_confidence"),
+        combined_confidence=s.get("combined_confidence"),
+        disagreement=s.get("disagreement", False),
+        severity=s.get("severity"),
+        action=s["action"],
+        reasoning=s.get("reasoning"),
+        confidence_basis=s.get("confidence_basis"),
+        triage_reason=s.get("triage_reason"),
+        is_true_positive=e.is_true_positive,
+    )

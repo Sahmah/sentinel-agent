@@ -1,9 +1,11 @@
 """`sentinel` command line.
 
-    sentinel demo      synthetic scene, end to end, zero AWS
-    sentinel webcam    live camera or a video file, with YOLO (needs the `vision` extra)
+    sentinel demo       synthetic scene, end to end, zero AWS
+    sentinel webcam     live camera or a video file, with YOLO (needs the `vision` extra)
+    sentinel serve-mcp  MCP server (stdio) over the recorded events
 
 The LLM backend comes from SENTINEL_LLM_BACKEND (`demo` by default; see agent/llm.py).
+Decided events are stored per SENTINEL_STORAGE_BACKEND (SQLite by default; see storage/).
 """
 
 import argparse
@@ -11,7 +13,10 @@ import queue
 import sys
 import threading
 import time
+import uuid
 from collections import Counter
+from collections.abc import Callable
+from datetime import UTC, datetime
 
 from sentinel_agent.agent.graph import DecisionPolicy, build_graph
 from sentinel_agent.agent.llm import build_llm
@@ -23,7 +28,9 @@ from sentinel_agent.pipeline import (
     evaluate_calibration,
     fit_calibrator,
     synthetic_detections,
+    to_record,
 )
+from sentinel_agent.storage import build_storage, describe_storage
 
 
 def format_decision(d: Decision) -> str:
@@ -55,6 +62,10 @@ def cmd_demo(args: argparse.Namespace) -> int:
     events = cluster_into_events(detections)
     graph = build_graph(build_llm())
     decisions = [decide(graph, e, calibrator) for e in events]
+    if not args.no_store:
+        storage, run_id, started = build_storage(), uuid.uuid4().hex[:12], datetime.now(UTC)
+        for d in decisions:
+            storage.save(to_record(d, run_id=run_id, source="demo", run_started_at=started))
 
     print(HEADER)
     for d in decisions:
@@ -78,6 +89,8 @@ def cmd_demo(args: argparse.Namespace) -> int:
         f"ECE {report.raw_ece:.3f} -> {report.calibrated_ece:.3f}, "
         f"Brier {report.raw_brier:.3f} -> {report.calibrated_brier:.3f}"
     )
+    if not args.no_store:
+        print(f"Saved {len(decisions)} events to {describe_storage()} (run {run_id}).")
     return 0
 
 
@@ -93,9 +106,11 @@ class EventWorker:
     (seconds per event on Bedrock) doesn't freeze capture and the preview window.
     Events are handled one at a time, in the order they closed."""
 
-    def __init__(self, graph, *, out=None):
+    def __init__(self, graph, *, save: Callable[[Decision], None] | None = None, out=None):
         self.last_line = ""
+        self.saved = 0
         self._graph = graph
+        self._save = save
         self._out = out
         self._queue: queue.Queue[Event | None] = queue.Queue()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -118,6 +133,12 @@ class EventWorker:
             except Exception as exc:  # keep the stream alive if one LLM call fails
                 print(f"agent failed on {event.label} at {event.start_ts:.1f}s: {exc}", file=out)
                 continue
+            if self._save is not None:
+                try:
+                    self._save(d)
+                    self.saved += 1
+                except Exception as exc:  # a storage hiccup shouldn't stop the camera either
+                    print(f"could not save {event.label} at {event.start_ts:.1f}s: {exc}", file=out)
             self.last_line = f"{event.label}: {d.state['action']}"
             print(format_decision(d), file=out)
             if d.state.get("reasoning"):
@@ -184,7 +205,17 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     detector.detect(np.zeros((480, 640, 3), np.uint8), camera_id="", frame_index=0, timestamp=0)
     aggregator = StreamingAggregator(gap_seconds=args.gap)
     policy = DecisionPolicy(min_person_detections_outside_zone=args.min_detections)
-    worker = EventWorker(build_graph(build_llm(), policy=policy))
+    save = None
+    if not args.no_store:
+        storage, run_id = build_storage(), uuid.uuid4().hex[:12]
+
+        def save(d: Decision) -> None:
+            # run_started_at is set when the clock starts, before any event can close.
+            storage.save(
+                to_record(d, run_id=run_id, source="webcam", run_started_at=run_started_at)
+            )
+
+    worker = EventWorker(build_graph(build_llm(), policy=policy), save=save)
     source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
     step = 1 if is_camera else max(1, round(source_fps / args.fps))
 
@@ -193,6 +224,7 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     print(HEADER)
 
     started = time.monotonic()
+    run_started_at = datetime.now(UTC)
     last_processed = float("-inf")
     frame_index = -1
     analysed = 0
@@ -237,6 +269,16 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     print(
         f"\n{analysed} frames analysed in {elapsed:.1f} s ({analysed / max(elapsed, 1e-9):.1f} fps)"
     )
+    if not args.no_store:
+        print(f"Saved {worker.saved} events to {describe_storage()} (run {run_id}).")
+    return 0
+
+
+def cmd_serve_mcp(args: argparse.Namespace) -> int:
+    from sentinel_agent.mcp_server.server import build_server
+
+    # stdout is the MCP channel: nothing else may be printed to it.
+    build_server().run()
     return 0
 
 
@@ -252,6 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         default=5,
         help="number of other scenes (seed+1, seed+2, ...) to fit calibration on",
     )
+    demo.add_argument("--no-store", action="store_true", help="don't save the events")
     demo.set_defaults(func=cmd_demo)
 
     webcam = sub.add_parser("webcam", help="run on a webcam or video file with YOLO")
@@ -271,7 +314,11 @@ def main(argv: list[str] | None = None) -> int:
     webcam.add_argument("--camera-id", default="webcam")
     webcam.add_argument("--max-seconds", type=float, help="stop after this many seconds")
     webcam.add_argument("--no-window", action="store_true", help="no preview window")
+    webcam.add_argument("--no-store", action="store_true", help="don't save the events")
     webcam.set_defaults(func=cmd_webcam)
+
+    serve = sub.add_parser("serve-mcp", help="MCP server (stdio) to query the recorded events")
+    serve.set_defaults(func=cmd_serve_mcp)
 
     args = parser.parse_args(argv)
     return args.func(args)

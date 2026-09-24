@@ -85,6 +85,10 @@ took 60 s to open a Logitech C270; DirectShow opens it in 0.5 s. The first YOLO 
 (~2 s) runs before the clock starts, and the run ends with a line like
 `67 frames analysed in 15.3 s (4.4 fps)`.
 
+Events from a Windows run are saved to `sentinel.db` in the folder you ran from (`$HOME`
+above). To query them over MCP from WSL, point the server at that file:
+`SENTINEL_DB_PATH=/mnt/c/Users/<you>/sentinel.db uv run sentinel serve-mcp`.
+
 ## Honest limitations
 
 - **`p_cv` is uncalibrated here** (it's marked `*` in the output). Live input has no ground
