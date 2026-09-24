@@ -37,8 +37,9 @@ from sentinel_agent.snapshots import snapshot_dir
 from sentinel_agent.storage import build_storage
 from sentinel_agent.storage.base import EventFilter, Storage, apply_review
 
-# Only names the snapshot writer produces: a UUID, optionally "_scene", ".jpg".
-SNAPSHOT_NAME = re.compile(r"^[0-9a-f-]{36}(_scene)?\.jpg$")
+# Only paths the snapshot writer produces: an optional source folder, a UUID,
+# optionally "_scene", ".jpg". Nothing else under the folder is ever served.
+SNAPSHOT_NAME = re.compile(r"^(?:(?:demo|webcam)/)?[0-9a-f-]{36}(_scene)?\.jpg$")
 REVIEW_VERDICTS = ("real", "false_alarm")
 
 
@@ -155,7 +156,7 @@ def build_app(
         Route("/api/events", list_events),
         Route("/api/events/{id}", get_event),
         Route("/api/events/{id}/review", review, methods=["POST"]),
-        Route("/api/snapshots/{name}", snapshot),
+        Route("/api/snapshots/{name:path}", snapshot),
         Route("/api/stream", stream),
     ]
     if frontend is not None and frontend.is_dir():

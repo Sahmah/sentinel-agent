@@ -66,6 +66,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     print(f"Calibrating on synthetic scenes {seeds[0]}-{seeds[-1]}...")
     calibrator = fit_calibrator([d for s in seeds for d in synthetic_detections(s)])
 
+    print(_agent_banner())
     print(f"Running the pipeline on synthetic seed {args.seed}...\n")
     frames, detections = synthetic_scene(args.seed)
     events = cluster_into_events(detections)
@@ -76,7 +77,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     if vision or not args.no_store:
         for e in events:
             frame = frames.get(e.best_frame_index)
-            snapshots[e.id] = save_snapshots(frame, e) if frame is not None else None
+            snapshots[e.id] = save_snapshots(frame, e, source="demo") if frame is not None else None
     decisions = [
         decide(graph, e, calibrator, snapshot_path=_snapshot_path(snapshots.get(e.id)))
         for e in events
@@ -304,12 +305,13 @@ def cmd_webcam(args: argparse.Namespace) -> int:
             for event in events:
                 frame = frame_buffer.get(event.best_frame_index)
                 if frame is not None:
-                    snapshots[event.id] = save_snapshots(frame, event)
+                    snapshots[event.id] = save_snapshots(frame, event, source="webcam")
         worker.submit(events)
 
     source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
     step = 1 if is_camera else max(1, round(source_fps / args.fps))
 
+    print(_agent_banner())
     if calibrator is not None:
         print(f"p_cv is calibrated on {n_reviewed} events you reviewed for this camera.")
     else:
@@ -464,6 +466,24 @@ def cmd_eval_llm(args: argparse.Namespace) -> int:
         )
     print(f"Metrics written to {path}")
     return 0
+
+
+def _agent_banner() -> str:
+    """Which agent will reason about events: said up front, because the default
+    (rules standing in for an LLM) is easy to mistake for a real model."""
+    import os
+
+    backend = os.environ.get("SENTINEL_LLM_BACKEND", "demo")
+    if backend == "demo":
+        return (
+            "Agent: demo rules standing in for an LLM (no model is called).\n"
+            "       For a real one: export SENTINEL_LLM_BACKEND=ollama (or bedrock)."
+        )
+    vision = " with vision (sees each crop)" if vision_enabled() else ", text only"
+    if backend == "ollama":
+        url = os.environ.get("SENTINEL_OLLAMA_URL", "http://127.0.0.1:11434")
+        return f"Agent: {_backend_name()} at {url}{vision}."
+    return f"Agent: {_backend_name()}{vision}."
 
 
 def _backend_name() -> str:

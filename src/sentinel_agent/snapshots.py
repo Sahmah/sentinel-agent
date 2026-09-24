@@ -1,6 +1,8 @@
 """Event snapshots: the moment an event is about, saved as images.
 
-For each event two JPEGs are written, named after the event id:
+Each run's images go into a folder per source (`snapshots/demo/`, `snapshots/webcam/`),
+so the drawn synthetic scenes never mix with real camera frames. For each event two
+JPEGs are written, named after the event id:
 - `<id>.jpg`: a crop around the highest-confidence detection (with a margin,
   so the object is seen in context), which is what a person or a vision LLM
   looks at first;
@@ -50,12 +52,21 @@ def crop_box(
     return x0, y0, x1, y1
 
 
-def save_snapshots(frame: np.ndarray, event: Event, directory: Path | None = None) -> str | None:
-    """Write the crop and the scene for `event`. Returns the crop's file name,
-    or None when the event has no box to crop."""
+def scene_path(snapshot: str) -> str:
+    """The scene image that goes with a stored crop path (`webcam/<id>.jpg`)."""
+    return snapshot.removesuffix(".jpg") + "_scene.jpg"
+
+
+def save_snapshots(
+    frame: np.ndarray, event: Event, directory: Path | None = None, *, source: str = ""
+) -> str | None:
+    """Write the crop and the scene for `event` under `directory/source/`. Returns
+    the crop's path relative to `directory` (what the record stores), or None when
+    the event has no box to crop."""
     if event.best_bbox is None:
         return None
-    directory = directory or snapshot_dir()
+    root = directory or snapshot_dir()
+    directory = root / source if source else root
     directory.mkdir(parents=True, exist_ok=True)
 
     x0, y0, x1, y1 = crop_box(frame.shape, event.best_bbox)
@@ -67,7 +78,7 @@ def save_snapshots(frame: np.ndarray, event: Event, directory: Path | None = Non
     cv2.rectangle(scene, (x, y), (x + w, y + h), color, 2)
     cv2.putText(scene, event.label, (x, max(12, y - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     cv2.imwrite(str(directory / scene_name(event.id)), scene)
-    return crop_name(event.id)
+    return f"{source}/{crop_name(event.id)}" if source else crop_name(event.id)
 
 
 class FrameBuffer:

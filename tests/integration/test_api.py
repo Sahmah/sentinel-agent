@@ -68,9 +68,13 @@ def test_review_is_stored_and_counted(client):
     assert client.post("/api/events/nope/review", json={"verdict": "real"}).status_code == 404
 
 
-def test_snapshots_only_serve_snapshot_files(client):
+def test_snapshots_only_serve_snapshot_files(client, snapshots):
     ok = client.get(f"/api/snapshots/{EVENT_ID}.jpg")
     assert ok.status_code == 200 and ok.content.startswith(b"\xff\xd8")
+    (snapshots / "webcam").mkdir()
+    (snapshots / "webcam" / f"{EVENT_ID}_scene.jpg").write_bytes(b"\xff\xd8scene")
+    assert client.get(f"/api/snapshots/webcam/{EVENT_ID}_scene.jpg").status_code == 200
+    assert client.get(f"/api/snapshots/other/{EVENT_ID}.jpg").status_code == 404
     assert client.get("/api/snapshots/secret.txt").status_code == 404
     assert client.get("/api/snapshots/..%2Fevents.db").status_code == 404
 

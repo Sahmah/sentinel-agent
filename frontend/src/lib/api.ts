@@ -102,5 +102,6 @@ export function cropUrl(event: EventRecord): string | null {
 }
 
 export function sceneUrl(event: EventRecord): string | null {
-	return event.snapshot ? `/api/snapshots/${event.id}_scene.jpg` : null;
+	// `snapshot` is "<source>/<id>.jpg"; the full frame sits next to it as "<id>_scene.jpg".
+	return event.snapshot ? `/api/snapshots/${event.snapshot.replace(/\.jpg$/, '_scene.jpg')}` : null;
 }

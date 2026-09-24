@@ -40,13 +40,14 @@ def heuristic_reasoning(payload: dict) -> ReasoningOutput:
     severity: Severity
     if label == "person" and in_zone:
         severity = "high" if n >= SUSTAINED_TRACK_DETECTIONS else "medium"
-        where = "entered the restricted zone"
+        where = "inside the restricted zone"
     elif in_zone:
-        severity, where = "medium", "appeared in the restricted zone (not classified as a person)"
+        severity, where = "medium", "inside the restricted zone (not a person)"
     else:
-        severity, where = "low", "stayed outside the restricted zone"
+        severity, where = "low", "outside the restricted zone"
 
-    reasoning = f"{label.capitalize()} {where}; {track}."
+    # "Detected as": the label is the detector's claim, which this step exists to question.
+    reasoning = f"Detected as {label}, {where}; {track}."
     basis = (
         "A longer continuous track would raise confidence; a track this short is "
         "consistent with clutter."

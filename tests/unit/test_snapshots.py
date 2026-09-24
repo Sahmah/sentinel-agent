@@ -22,6 +22,15 @@ def test_save_snapshots_writes_crop_and_scene(tmp_path, make_event):
     assert scene.shape == frame.shape
 
 
+def test_snapshots_are_filed_by_source(tmp_path, make_event):
+    from sentinel_agent.snapshots import scene_path
+
+    event = make_event(best_frame_index=0, best_bbox=(10, 10, 20, 20))
+    stored = save_snapshots(np.zeros((64, 64, 3), np.uint8), event, tmp_path, source="webcam")
+    assert stored == f"webcam/{event.id}.jpg"
+    assert (tmp_path / stored).is_file() and (tmp_path / scene_path(stored)).is_file()
+
+
 def test_event_without_box_has_no_snapshot(tmp_path, make_event):
     assert save_snapshots(np.zeros((10, 10, 3), np.uint8), make_event(), tmp_path) is None
 
