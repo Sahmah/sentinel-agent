@@ -1,16 +1,11 @@
 import { error } from '@sveltejs/kit';
-import { ACTIONS, ApiError, getSummary, listEvents, type Action } from '$lib/api';
+import { ApiError, getDays } from '$lib/api';
+import { viewerTimeZone } from '$lib/days';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ fetch, url }) => {
-	const param = url.searchParams.get('action');
-	const action = ACTIONS.includes(param as Action) ? (param as Action) : null;
+export const load: PageLoad = async ({ fetch }) => {
 	try {
-		const [summary, page] = await Promise.all([
-			getSummary(fetch),
-			listEvents({ action }, fetch)
-		]);
-		return { summary, page, action };
+		return { days: await getDays(viewerTimeZone(), fetch) };
 	} catch (e) {
 		if (e instanceof ApiError) error(503, e.message);
 		throw e;

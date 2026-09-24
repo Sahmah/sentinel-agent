@@ -66,3 +66,30 @@ def test_summary_pages_through_and_flags_truncation(store, monkeypatch):
 def test_empty_store_summary(tmp_path):
     s = tools.summarize_events(SqliteStorage(tmp_path / "empty.db"))
     assert (s.total, s.first_occurred_at, s.alert_ids) == (0, None, [])
+
+
+def test_list_events_filters_by_review(store, make_record):
+    store.save(make_record(9, action="human_review", review="false_alarm"))
+    assert [r.id for r in tools.list_events(store, review="false_alarm").events] == ["evt-009"]
+    unreviewed = tools.list_events(store, action="human_review", review="unreviewed").events
+    assert [r.id for r in unreviewed] == ["evt-001"]
+
+
+def test_days_follow_the_viewers_time_zone(store, make_record):
+    # 02:00 UTC on the 25th is still 23:00 on the 24th in São Paulo (UTC-3).
+    store.save(make_record(14 * 60, id="late", action="human_review", review="real"))
+
+    utc = tools.events_by_day(store, tz="UTC")
+    assert [(d.day, d.total) for d in utc.days] == [("2026-09-25", 1), ("2026-09-24", 4)]
+
+    local = tools.events_by_day(store, tz="America/Sao_Paulo")
+    assert [(d.day, d.total) for d in local.days] == [("2026-09-24", 5)]
+    (day,) = local.days
+    assert (day.needs_review, day.reviewed_real, day.disagreements) == (1, 1, 1)
+    assert day.by_action["human_review"] == 2
+    assert local.needs_review == 1 and not local.truncated
+
+
+def test_unknown_time_zone_is_a_tool_error(store):
+    with pytest.raises(ToolError, match="time zone"):
+        tools.events_by_day(store, tz="Mars/Olympus")

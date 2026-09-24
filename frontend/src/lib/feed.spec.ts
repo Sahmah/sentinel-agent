@@ -5,21 +5,23 @@ import { mergeLive, replaceRecord } from './feed';
 const event = (id: string, action: EventRecord['action'] = 'logged') =>
 	({ id, action }) as EventRecord;
 
+const isAlert = (e: EventRecord) => e.action === 'alert';
+
 describe('mergeLive', () => {
 	it('prepends new events', () => {
-		const merged = mergeLive([event('a')], event('b'), null);
+		const merged = mergeLive([event('a')], event('b'));
 		expect(merged.map((e) => e.id)).toEqual(['b', 'a']);
 	});
 
 	it('ignores an event it already has (stream replay after reconnect)', () => {
 		const list = [event('a')];
-		expect(mergeLive(list, event('a'), null)).toBe(list);
+		expect(mergeLive(list, event('a'))).toBe(list);
 	});
 
-	it('respects the active filter', () => {
+	it('leaves out events the view excludes', () => {
 		const list = [event('a', 'alert')];
-		expect(mergeLive(list, event('b', 'logged'), 'alert')).toBe(list);
-		expect(mergeLive(list, event('c', 'alert'), 'alert')).toHaveLength(2);
+		expect(mergeLive(list, event('b', 'logged'), isAlert)).toBe(list);
+		expect(mergeLive(list, event('c', 'alert'), isAlert)).toHaveLength(2);
 	});
 });
 

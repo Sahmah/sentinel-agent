@@ -18,7 +18,7 @@ from pydantic import Field
 from sentinel_agent.agent.state import Action
 from sentinel_agent.mcp_server import tools
 from sentinel_agent.storage import build_storage
-from sentinel_agent.storage.base import EventPage, EventRecord, Storage
+from sentinel_agent.storage.base import EventPage, EventRecord, ReviewFilter, Storage
 
 INSTRUCTIONS = """\
 Events recorded by Sentinel Agent: a vision detector plus an LLM agent deciding, for each
@@ -44,6 +44,10 @@ def build_server(storage: Storage | None = None) -> MCPServer:
         action: Annotated[Action | None, Field(description="Only this decision")] = None,
         since: Since = None,
         until: Until = None,
+        review: Annotated[
+            ReviewFilter | None,
+            Field(description="A person's verdict, or 'unreviewed' for events without one"),
+        ] = None,
         limit: Annotated[int, Field(ge=1, le=tools.MAX_PAGE)] = 20,
         cursor: Annotated[
             str | None, Field(description="next_cursor from the previous page")
@@ -56,6 +60,7 @@ def build_server(storage: Storage | None = None) -> MCPServer:
             action=action,
             since=since,
             until=until,
+            review=review,
             limit=limit,
             cursor=cursor,
         )

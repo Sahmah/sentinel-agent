@@ -2,6 +2,7 @@
 
     GET  /api/summary                 counts, same as the MCP summarize_events tool
     GET  /api/events                  newest first, filters + cursor, same as list_events
+    GET  /api/days?tz=Area/City       event counts per calendar day in that time zone
     GET  /api/events/{id}             one event
     POST /api/events/{id}/review      {"verdict": "real" | "false_alarm"}
     GET  /api/snapshots/{file}        a crop or scene JPEG
@@ -93,10 +94,20 @@ def build_app(
             action=params.get("action"),
             since=_datetime_param(request, "since"),
             until=_datetime_param(request, "until"),
+            review=params.get("review"),
             limit=max(1, limit),
             cursor=params.get("cursor"),
         )
         return JSONResponse(page.model_dump(mode="json"))
+
+    async def days(request: Request) -> Response:
+        result = await asyncio.to_thread(
+            tools.events_by_day,
+            storage,
+            tz=request.query_params.get("tz") or "UTC",
+            camera_id=request.query_params.get("camera_id"),
+        )
+        return JSONResponse(result.model_dump(mode="json"))
 
     async def get_event(request: Request) -> Response:
         record = await asyncio.to_thread(tools.get_event, storage, request.path_params["id"])
@@ -154,6 +165,7 @@ def build_app(
     routes = [
         Route("/api/summary", summary),
         Route("/api/events", list_events),
+        Route("/api/days", days),
         Route("/api/events/{id}", get_event),
         Route("/api/events/{id}/review", review, methods=["POST"]),
         Route("/api/snapshots/{name:path}", snapshot),

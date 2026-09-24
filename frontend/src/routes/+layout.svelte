@@ -6,7 +6,10 @@
 
 	let { children } = $props();
 
-	let reviewQueue = $derived(page.url.searchParams.get('action') === 'human_review');
+	let onDay = $derived(page.url.pathname === '/events' && page.url.searchParams.has('day'));
+	let pendingView = $derived(
+		page.url.pathname === '/events' && page.url.searchParams.get('view') === 'pending'
+	);
 </script>
 
 <svelte:head>
@@ -17,11 +20,18 @@
 <header>
 	<a class="brand" href={resolve('/')}>Sentinel</a>
 	<nav aria-label="Main">
-		<a href={resolve('/')} aria-current={page.url.pathname === '/' && !reviewQueue ? 'page' : undefined}
-			>Events</a
+		<a href={resolve('/')} aria-current={page.url.pathname === '/' || (onDay && !pendingView) ? 'page' : undefined}
+			>Days</a
 		>
-		<a href={resolve('/?action=human_review')} aria-current={reviewQueue ? 'page' : undefined}
-			>Review queue</a
+		<a
+			href={resolve('/events')}
+			aria-current={page.url.pathname === '/events' && !pendingView && !onDay
+				? 'page'
+				: undefined}
+			>All events</a
+		>
+		<a href={resolve('/events?view=pending')} aria-current={pendingView ? 'page' : undefined}
+			>Needs you</a
 		>
 	</nav>
 </header>

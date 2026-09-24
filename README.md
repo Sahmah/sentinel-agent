@@ -117,14 +117,17 @@ uv run sentinel serve             # http://127.0.0.1:8000
 ```
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="Dashboard: summary tiles, filters, and live events with crops and vision/agent confidence bars" width="49%">
+  <img src="docs/images/dashboard.png" alt="Dashboard home: tiles with the pending-decision count, an events-per-day chart, and the list of days" width="49%">
   <img src="docs/images/event-detail.png" alt="Event page: scene, crop, the agent's reasoning, three confidences and the review buttons" width="49%">
 </p>
 
-A Svelte 5 dashboard over the same event store: summary, filters and a review queue, a live
-feed (new events arrive over Server-Sent Events while `sentinel webcam` runs), and for each
-event the scene, the crop, the agent's reasoning and the three confidences (vision, agent,
-fused). The **Real** / **False alarm** buttons record a person's verdict; once a camera has
+A Svelte 5 dashboard over the same event store. The home page leads with how many events
+are waiting for your decision (one click opens that queue, across all days), an events-per-day
+chart, and the list of days with their counts. Opening a day shows its events in tabs by what
+a person said (**All**, **Needs you**, **Real**, **False alarms**), with the system's decision
+(alert, review, logged, dismissed) as a second filter. New events arrive live over
+Server-Sent Events while `sentinel webcam` runs, and each event shows the scene, the crop, the
+agent's reasoning and the three confidences (vision, agent, fused). The **Real** / **False alarm** buttons record a person's verdict; once a camera has
 five of each, `sentinel webcam` calibrates its `p_cv` on them, which is the live version of
 the calibration the demo does with synthetic ground truth. Desktop notifications fire for
 live alerts and review requests after an explicit opt-in. See
@@ -222,7 +225,7 @@ less independent (the model still never sees the detector's score).
 | Reason | `agent/` | One LLM call returns JSON with `severity`, `reasoning`, `confidence` and `confidence_basis`. If the reply can't be parsed twice, the event goes to `human_review` |
 | Decide | `calibration/fusion.py` | Weighted fusion of `p_cv` and `p_llm`. A gap above 0.35 counts as disagreement and goes to a human; low combined confidence is dismissed |
 | Snapshot | `snapshots.py` | When an event closes, a crop around its most confident detection (`<id>.jpg`) and the full frame with the box (`<id>_scene.jpg`) are saved to `snapshots/` |
-| Serve (HTTP) | `api.py` | Starlette API for the dashboard: events, summary, snapshots, an SSE stream of new events, and human review |
+| Serve (HTTP) | `api.py` | Starlette API for the dashboard: events (filterable by decision, verdict and time), per-day counts, summary, snapshots, an SSE stream of new events, and human review |
 | Store | `storage/` | One flat record per decided event. SQLite (keyset pagination) or DynamoDB (time-ordered GSI), behind the same `Storage` protocol |
 | Serve | `mcp_server/` | Tool logic as plain functions over `Storage`; `MCPServer` only adds schemas. Expected failures raise `ToolError`, anything else is masked |
 | Calibrate | `calibration/` | Platt scaling, isotonic regression, temperature scaling, self-consistency, ECE and Brier score |

@@ -33,6 +33,10 @@ npx @sveltejs/mcp svelte-autofixer src/routes/+page.svelte   # official Svelte l
 | `src/lib/api.ts` | Types mirroring the Python models, and the API client |
 | `src/lib/live.svelte.ts` | The `/api/stream` connection (`LiveFeed`) |
 | `src/lib/feed.ts` | Pure list logic for live events (tested) |
+| `src/lib/days.ts` | Local calendar days: ranges, labels, the viewer's time zone (tested) |
+| `src/lib/views.ts` | The events page's tabs and filters, as API queries and URLs (tested) |
+| `src/lib/overview.ts` | Per-day bars and 7-day totals for the home page (tested) |
 | `src/lib/notify.ts` | Desktop notifications for `alert` and `human_review` |
-| `src/routes/+page.svelte` | Summary, filters, live event list |
+| `src/routes/+page.svelte` | Home: pending count, events-per-day chart, list of days |
+| `src/routes/events/+page.svelte` | One day (or all): tabs by verdict, decision filter, live list |
 | `src/routes/events/[id]/+page.svelte` | Scene, crop, reasoning, confidences, review |

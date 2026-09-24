@@ -68,6 +68,19 @@ def test_review_is_stored_and_counted(client):
     assert client.post("/api/events/nope/review", json={"verdict": "real"}).status_code == 404
 
 
+def test_review_filter_and_days(client):
+    client.post(f"/api/events/{EVENT_ID}/review", json={"verdict": "real"})
+    real = client.get("/api/events", params={"review": "real"}).json()["events"]
+    assert [e["id"] for e in real] == [EVENT_ID]
+    assert client.get("/api/events", params={"review": "maybe"}).status_code == 400
+
+    days = client.get("/api/days", params={"tz": "America/Sao_Paulo"}).json()
+    assert [(d["day"], d["total"], d["reviewed_real"]) for d in days["days"]] == [
+        ("2026-09-24", 4, 1)
+    ]
+    assert client.get("/api/days", params={"tz": "Nowhere/Land"}).status_code == 400
+
+
 def test_snapshots_only_serve_snapshot_files(client, snapshots):
     ok = client.get(f"/api/snapshots/{EVENT_ID}.jpg")
     assert ok.status_code == 200 and ok.content.startswith(b"\xff\xd8")

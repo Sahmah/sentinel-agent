@@ -23,6 +23,8 @@ dependencies = [
     "boto3>=1.35",
     "starlette>=1.0",
     "uvicorn>=0.30",
+    # IANA time zones for the dashboard's per-day view; Windows has no system database.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
