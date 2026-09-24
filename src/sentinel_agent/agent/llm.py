@@ -40,7 +40,9 @@ from sentinel_agent.agent.schemas import ReasoningOutput
 
 DEFAULT_BEDROCK_MODEL_ID = "anthropic.claude-opus-5"
 DEFAULT_OLLAMA_MODEL = "gemma3:4b"
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
+# 127.0.0.1, not localhost: with OLLAMA_HOST=0.0.0.0 Ollama listens on IPv4 only, and
+# Windows may resolve localhost to ::1 first.
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 RETRYABLE_AWS_ERRORS = ("ThrottlingException", "ServiceUnavailableException")
 
 
