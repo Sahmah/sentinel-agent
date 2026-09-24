@@ -311,7 +311,6 @@ the real model runs only when the `vision` extra and the weights are installed.
 - [x] Webcam confidence calibrated on human reviews
 - [x] Review memory: similar reviewed events shown to the agent as examples
 - [ ] Grade vision and memory on reviewed real footage (`eval-reviews`)
-- [ ] Fine-tune YOLO on reviewed crops (pre-label, check in Label Studio, train)
 - [ ] Phone notifications (Telegram or self-hosted ntfy)
 - [x] Terraform for the AWS path (least-privilege IAM, Bedrock, DynamoDB), tested offline
 - [x] GitHub Actions CI (Python, dashboard, Terraform)
