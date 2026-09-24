@@ -24,10 +24,11 @@ def make_event():
 
 @pytest.fixture(autouse=True)
 def _isolated_storage(tmp_path, monkeypatch):
-    """Commands that save events must never write sentinel.db or snapshots/ into the repo."""
+    """Commands that save events must never write sentinel.db, snapshots/ or lab/ into the repo."""
     monkeypatch.delenv("SENTINEL_STORAGE_BACKEND", raising=False)
     monkeypatch.setenv("SENTINEL_DB_PATH", str(tmp_path / "sentinel.db"))
     monkeypatch.setenv("SENTINEL_SNAPSHOT_DIR", str(tmp_path / "snapshots"))
+    monkeypatch.setenv("SENTINEL_LAB_DIR", str(tmp_path / "lab"))
 
 
 @pytest.fixture

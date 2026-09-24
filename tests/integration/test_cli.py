@@ -29,3 +29,21 @@ def test_webcam_reports_unopenable_source(capsys, tmp_path):
     missing = tmp_path / "nope.mp4"
     assert main(["webcam", "--source", str(missing), "--no-window"]) == 1
     assert "Could not open" in capsys.readouterr().err
+
+
+def test_demo_writes_its_report_and_report_command_works(capsys, tmp_path):
+    main(["demo", "--calibration-scenes", "2"])
+    out = capsys.readouterr().out
+    report = out.split("Report: ")[1].strip()
+    text = open(report).read()
+    assert report.startswith(str(tmp_path / "lab" / "reports"))
+    assert "| alert | 1 |" in text and "![person crop](" in text
+
+    assert main(["report", "--hours", "1"]) == 0
+    assert "Report: " in capsys.readouterr().out
+
+
+def test_eval_llm_keeps_every_run(capsys, tmp_path):
+    assert main(["eval-llm", "--seeds", "1"]) == 0
+    evals = list((tmp_path / "lab" / "evals").glob("eval-demo-*.json"))
+    assert len(evals) == 1

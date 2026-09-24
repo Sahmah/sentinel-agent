@@ -4,6 +4,7 @@
     sentinel webcam     live camera or a video file, with YOLO (needs the `vision` extra)
     sentinel serve-mcp  MCP server (stdio) over the recorded events
     sentinel eval-llm   grade the reasoning LLM against synthetic ground truth
+    sentinel report     Markdown report of recorded events, in lab/reports/
     sentinel serve      HTTP API + dashboard at http://127.0.0.1:8000
 
 The LLM backend comes from SENTINEL_LLM_BACKEND (`demo` by default; see agent/llm.py).
@@ -35,8 +36,10 @@ from sentinel_agent.pipeline import (
     synthetic_scene,
     to_record,
 )
+from sentinel_agent.report import lab_dir, write_report
 from sentinel_agent.snapshots import FrameBuffer, save_snapshots, snapshot_dir
 from sentinel_agent.storage import build_storage, describe_storage
+from sentinel_agent.storage.base import EventFilter
 
 
 def format_decision(d: Decision) -> str:
@@ -118,6 +121,14 @@ def cmd_demo(args: argparse.Namespace) -> int:
             f"Saved {len(decisions)} events to {describe_storage()} (run {run_id}), "
             f"snapshots in {snapshot_dir()}/."
         )
+        report = write_report(
+            storage,
+            title=f"Sentinel demo, seed {args.seed} (run {run_id})",
+            filters=EventFilter(since=started),
+            run_id=run_id,
+            name=f"demo-{started:%Y%m%d-%H%M%S}-{run_id}",
+        )
+        print(f"Report: {report}")
     return 0
 
 
@@ -369,6 +380,14 @@ def cmd_webcam(args: argparse.Namespace) -> int:
     )
     if not args.no_store:
         print(f"Saved {worker.saved} events to {describe_storage()} (run {run_id}).")
+        report = write_report(
+            storage,
+            title=f"Sentinel webcam, {args.camera_id} (run {run_id})",
+            filters=EventFilter(since=run_started_at),
+            run_id=run_id,
+            name=f"webcam-{run_started_at:%Y%m%d-%H%M%S}-{run_id}",
+        )
+        print(f"Report: {report}")
     return 0
 
 
@@ -383,6 +402,7 @@ def _parse_seeds(text: str) -> list[int]:
 
 def cmd_eval_llm(args: argparse.Namespace) -> int:
     import json
+    import os
 
     from sentinel_agent.evaluation import evaluate_llm
 
@@ -424,10 +444,25 @@ def cmd_eval_llm(args: argparse.Namespace) -> int:
         f"{m['false_alerted']} false alerts, {m['human_review']} sent to human review\n"
         f"Median time per event: {fmt(m['median_seconds'])} s"
     )
-    if args.json:
-        with open(args.json, "w") as f:
-            json.dump({"backend": _backend_name(), "seeds": args.seeds, "metrics": m}, f, indent=2)
-        print(f"Metrics written to {args.json}")
+    # Every run is kept, so prompt or model changes can be compared later.
+    path = args.json or str(
+        lab_dir() / "evals" / f"eval-{_backend_name().replace('/', '-').replace(':', '-')}"
+        f"-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
+    )
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(
+            {
+                "backend": _backend_name(),
+                "vision": False,
+                "seeds": args.seeds,
+                "metrics": m,
+                "events": [r.__dict__ for r in report.results],
+            },
+            f,
+            indent=2,
+        )
+    print(f"Metrics written to {path}")
     return 0
 
 
@@ -438,6 +473,20 @@ def _backend_name() -> str:
     if backend == "ollama":
         return f"ollama/{os.environ.get('SENTINEL_OLLAMA_MODEL', 'gemma3:4b')}"
     return backend
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    from datetime import timedelta
+
+    since = datetime.now(UTC) - timedelta(hours=args.hours)
+    path = write_report(
+        build_storage(),
+        title=f"Sentinel report, last {args.hours:g} h"
+        + (f", {args.camera_id}" if args.camera_id else ""),
+        filters=EventFilter(camera_id=args.camera_id, since=since),
+    )
+    print(f"Report: {path}")
+    return 0
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -517,8 +566,13 @@ def main(argv: list[str] | None = None) -> int:
     ev = sub.add_parser("eval-llm", help="grade the reasoning LLM on synthetic ground truth")
     ev.add_argument("--seeds", default="1-3", help='scenes to evaluate, e.g. "1-5" or "1,4"')
     ev.add_argument("--calibration-scenes", type=int, default=5)
-    ev.add_argument("--json", help="also write the metrics to this file")
+    ev.add_argument("--json", help="where to write the metrics (default: lab/evals/)")
     ev.set_defaults(func=cmd_eval_llm)
+
+    rp = sub.add_parser("report", help="write a Markdown report of recorded events to lab/")
+    rp.add_argument("--hours", type=float, default=24, help="how far back (default 24)")
+    rp.add_argument("--camera-id", help="only this camera")
+    rp.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)
     return args.func(args)

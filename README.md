@@ -251,6 +251,14 @@ cd infra && terraform test                         # infrastructure, offline
 CI runs all three on every push and pull request. Dependabot opens weekly grouped updates for
 the Python, npm, Terraform and GitHub Actions dependencies.
 
+### Reports and local test runs
+
+Each `sentinel demo` and `sentinel webcam` run ends by writing a Markdown report of that run to
+`lab/reports/`: counts by decision, the events that still need a person, and every event with
+its crop, confidences and reasoning. `sentinel report --hours 24` writes one for any period,
+and `sentinel eval-llm` keeps each run's scores in `lab/evals/` so prompt and model changes
+can be compared. `lab/` is ignored by git: it is the place for local experiments.
+
 ### Releases
 
 Bump `version` in `pyproject.toml`, commit, then tag and push:

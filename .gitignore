@@ -33,3 +33,6 @@ docs/guia-*.md
 
 # Dashboard bundled into the package by the release workflow
 src/sentinel_agent/dashboard/
+
+# Local test runs: reports, eval results, experiments (see report.py)
+lab/
