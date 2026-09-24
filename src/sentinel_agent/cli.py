@@ -422,9 +422,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     from sentinel_agent.api import build_app
 
-    frontend = Path(args.frontend)
+    # A checkout serves frontend/build; an installed release serves the copy bundled
+    # into the package (sentinel_agent/dashboard, added by the release workflow).
+    frontend = Path(args.frontend) if args.frontend else Path("frontend/build")
+    if not frontend.is_dir() and not args.frontend:
+        frontend = Path(__file__).parent / "dashboard"
     if not frontend.is_dir():
-        print(f"No dashboard build at {frontend}/ (see frontend/README.md); serving the API only.")
+        print("No dashboard build found (see frontend/README.md); serving the API only.")
     print(f"Sentinel API on http://{args.host}:{args.port} (events from {describe_storage()})")
     uvicorn.run(build_app(frontend=frontend), host=args.host, port=args.port, log_level="warning")
     return 0
@@ -479,7 +483,10 @@ def main(argv: list[str] | None = None) -> int:
     srv = sub.add_parser("serve", help="HTTP API and dashboard over the recorded events")
     srv.add_argument("--host", default="127.0.0.1", help="no auth: keep it on localhost")
     srv.add_argument("--port", type=int, default=8000)
-    srv.add_argument("--frontend", default="frontend/build", help="built dashboard to serve")
+    srv.add_argument(
+        "--frontend",
+        help="built dashboard to serve (default: frontend/build, else the bundled one)",
+    )
     srv.set_defaults(func=cmd_serve)
 
     ev = sub.add_parser("eval-llm", help="grade the reasoning LLM on synthetic ground truth")

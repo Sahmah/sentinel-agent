@@ -243,7 +243,23 @@ cd frontend && npm run check && npm test          # dashboard
 cd infra && terraform test                         # infrastructure, offline
 ```
 
-CI runs all three on every push. Claude Code users get the project's skills in
+CI runs all three on every push and pull request. Dependabot opens weekly grouped updates for
+the Python, npm, Terraform and GitHub Actions dependencies.
+
+### Releases
+
+Bump `version` in `pyproject.toml`, commit, then tag and push:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The Release workflow reruns the full CI, builds the dashboard, bundles it into the Python
+package, installs the wheel on its own to check that `sentinel serve` answers, and publishes a
+GitHub Release with the wheel, the sdist and the dashboard as a zip. With the wheel alone,
+`uv tool install sentinel_agent-<version>-py3-none-any.whl` gives you `sentinel serve` with the
+dashboard, no Node needed. Running the workflow by hand (Actions > Release) is a dry run: it
+builds and uploads the files as an artifact but publishes nothing. Claude Code users get the project's skills in
 `.claude/skills/` (including do/don't rules for the Svelte dashboard) and two MCP servers from
 `.mcp.json`: this project's event store and the official Svelte docs/autofixer.
 

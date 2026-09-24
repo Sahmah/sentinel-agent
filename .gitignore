@@ -29,3 +29,6 @@ docs/diario-*.md
 # Frontend tooling, if run from the repo root by mistake
 /node_modules/
 /.svelte-kit/
+
+# Dashboard bundled into the package by the release workflow
+src/sentinel_agent/dashboard/
